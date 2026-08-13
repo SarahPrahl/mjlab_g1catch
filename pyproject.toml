@@ -25,7 +25,6 @@ cu128 = ["torch>=2.7.0"]
 
 [dependency-groups]
 dev = [
-  "pyright>=1.1.408",
   "ruff>=0.16.1",
   "ty>=0.0.14",
 ]
@@ -72,24 +71,15 @@ torch = [
 src = ["src"]
 indent-width = 2
 line-length = 88
-exclude = ["third_party"]
+exclude = ["third_party", "typings"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B"]
 ignore = ["B011"]
 
-[tool.pyright]
-pythonVersion = "3.10"
-venvPath = "."
-venv = ".venv"
-include = ["src"]
-exclude = ["third_party", ".venv"]
-# MuJoCo exposes MjSpec and enums from its extension module at runtime, but its
-# distributed type information does not declare those members.
-reportAttributeAccessIssue = false
-
 [tool.ty.environment]
-extra-paths = []
+python = ".venv"
+extra-paths = ["typings"]
 
 [tool.ty.src]
 include = ["src"]

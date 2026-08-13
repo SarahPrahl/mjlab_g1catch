@@ -31,14 +31,14 @@ ACTUATED_JOINTS = (
 )
 
 
-def get_ball_spec() -> mujoco.MjSpec:  # ty: ignore[unresolved-attribute]
+def get_ball_spec() -> mujoco.MjSpec:
   """Create the 15 cm, 112 g dynamic ball specified for this task."""
-  spec = mujoco.MjSpec()  # ty: ignore[unresolved-attribute]
+  spec = mujoco.MjSpec()
   body = spec.worldbody.add_body(name="ball", pos=(100.0, 0.0, 100.0))
   body.add_freejoint(name="ball_freejoint")
   body.add_geom(
     name="ball_collision",
-    type=mujoco.mjtGeom.mjGEOM_SPHERE,  # ty: ignore[unresolved-attribute]
+    type=mujoco.mjtGeom.mjGEOM_SPHERE,
     size=(BALL_RADIUS_M, 0.0, 0.0),
     mass=BALL_MASS_KG,
     rgba=(0.95, 0.45, 0.08, 1.0),

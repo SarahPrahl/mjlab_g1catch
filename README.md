@@ -154,11 +154,28 @@ Before physical deployment, compare observation order, normalization, action
 scales, offsets, and clipping with `third_party/unitree_rl_mjlab/deploy/robots/g1`,
 then validate the controller in its integrated `unitree_mujoco` path.
 
+## Generated MuJoCo type stubs
+
+MuJoCo exposes most of its Python API from compiled extension modules without
+distributing type stubs. This repository checks in stubs generated from the
+locked MuJoCo version so ty can resolve that API.
+
+Regenerate them after updating MuJoCo or the pinned stub generator:
+
+```bash
+bash typings/generate_mujoco_stubs.sh
+```
+
+The workflow is adapted from mjlab's own stub generator. It uses a pinned
+`pybind11-stubgen`, then removes platform-specific rendering bindings and other
+machine-dependent output so `typings/mujoco` is reproducible on macOS and Linux.
+
 ## Checks
 
 ```bash
 uv run ruff format --check
 uv run ruff check
-uv run pyright
+bash typings/generate_mujoco_stubs.sh
+git diff --exit-code -- typings/mujoco
 uv run ty check
 ```

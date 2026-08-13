@@ -369,13 +369,11 @@ def _compute_spherical_foot_ground_offset(
     raise ValueError(f"No foot collision geoms matched {foot_geom_pattern!r}.")
   global_ids = robot.indexing.geom_ids[foot_local_ids].cpu().numpy()
   geom_types = sim.mj_model.geom_type[global_ids]
-  if np.any(
-    geom_types != int(mujoco.mjtGeom.mjGEOM_SPHERE)  # ty: ignore[unresolved-attribute]
-  ):
+  if np.any(geom_types != int(mujoco.mjtGeom.mjGEOM_SPHERE)):
     bad = [
       name
       for name, geom_type in zip(foot_names, geom_types, strict=True)
-      if geom_type != int(mujoco.mjtGeom.mjGEOM_SPHERE)  # ty: ignore[unresolved-attribute]
+      if geom_type != int(mujoco.mjtGeom.mjGEOM_SPHERE)
     ]
     raise ValueError(f"Grounding currently expects spherical foot geoms, got: {bad}")
   radii = sim.mj_model.geom_size[global_ids, 0]

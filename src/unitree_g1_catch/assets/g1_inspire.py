@@ -31,7 +31,7 @@ FINGER_ACTUATOR_EXPR = (
 )
 
 
-def get_spec() -> mujoco.MjSpec:  # ty: ignore[unresolved-attribute]
+def get_spec() -> mujoco.MjSpec:
   """Load and sanitize the vendored G1 + Inspire MJCF."""
   if not G1_INSPIRE_XML.exists():
     raise FileNotFoundError(
@@ -40,9 +40,7 @@ def get_spec() -> mujoco.MjSpec:  # ty: ignore[unresolved-attribute]
       "G1_INSPIRE_MODEL_DIR to the model checkout."
     )
 
-  spec = mujoco.MjSpec.from_file(  # ty: ignore[unresolved-attribute]
-    str(G1_INSPIRE_XML)
-  )
+  spec = mujoco.MjSpec.from_file(str(G1_INSPIRE_XML))
 
   # The source MJCF uses torque motors. mjlab supplies position actuators below,
   # matching the stock G1 tracking task and giving the policy joint targets.
@@ -58,7 +56,7 @@ def get_spec() -> mujoco.MjSpec:  # ty: ignore[unresolved-attribute]
     is_hand = body_name.startswith(("l_ih_", "r_ih_"))
     is_visible_contact_mesh = (
       is_hand
-      and geom.type == mujoco.mjtGeom.mjGEOM_MESH  # ty: ignore[unresolved-attribute]
+      and geom.type == mujoco.mjtGeom.mjGEOM_MESH
       and (geom.contype != 0 or geom.conaffinity != 0)
       and geom.rgba[3] > 0.1
     )
