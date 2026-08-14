@@ -15,6 +15,10 @@ The ball is a dynamic MuJoCo sphere with a diameter of 0.15 m and a mass of
 0.112 kg. It collides with the robot and ground; the recorded trajectory is a
 training reference, not a visual-only animation.
 
+During training, 75% of environments use a flat floor and 25% use smooth,
+millimetre-scale floor undulations. Playback and motion conversion remain flat
+and deterministic.
+
 ## Repository boundaries
 
 - `mjlab==1.6.0` is a normal uv dependency and supplies simulation, the stock

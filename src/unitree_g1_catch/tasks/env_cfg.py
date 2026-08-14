@@ -11,6 +11,12 @@ from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking import mdp as tracking_mdp
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
+from mjlab.terrains import (
+  BoxFlatTerrainCfg,
+  HfWaveTerrainCfg,
+  TerrainEntityCfg,
+  TerrainGeneratorCfg,
+)
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 from unitree_g1_catch import mdp as catch_mdp
@@ -29,6 +35,30 @@ ACTUATED_JOINTS = (
   "[lr]_ih_thumb_proximal_(yaw|pitch)",
   "[lr]_ih_(index|middle|ring|pinky)_proximal",
 )
+
+
+def _training_terrain_cfg() -> TerrainEntityCfg:
+  """Keep most environments flat and add millimetre-scale floor variation."""
+  return TerrainEntityCfg(
+    terrain_type="generator",
+    terrain_generator=TerrainGeneratorCfg(
+      curriculum=True,
+      size=(4.0, 4.0),
+      num_rows=4,
+      color_scheme="height",
+      sub_terrains={
+        "flat": BoxFlatTerrainCfg(proportion=0.75),
+        "slight_undulations": HfWaveTerrainCfg(
+          proportion=0.25,
+          amplitude_range=(0.001, 0.003),
+          num_waves=2,
+          horizontal_scale=0.05,
+          vertical_scale=0.0005,
+          border_width=0.25,
+        ),
+      },
+    ),
+  )
 
 
 def get_ball_spec() -> mujoco.MjSpec:
@@ -98,6 +128,8 @@ def unitree_g1_inspire_catch_env_cfg(
 ) -> ManagerBasedRlEnvCfg:
   """Create the reactive G1 + Inspire ball-catching task."""
   cfg = make_tracking_env_cfg()
+  if not play:
+    cfg.scene.terrain = _training_terrain_cfg()
   cfg.scene.entities = {
     "robot": get_g1_inspire_robot_cfg(),
     "ball": EntityCfg(spec_fn=get_ball_spec),
