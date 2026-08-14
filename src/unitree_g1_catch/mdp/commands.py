@@ -20,6 +20,7 @@ if TYPE_CHECKING:
   import viser
   from mjlab.entity import Entity
   from mjlab.envs import ManagerBasedRlEnv
+  from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 
 class CatchMotionLoader(MotionLoader):
@@ -91,6 +92,7 @@ class CatchMotionLoader(MotionLoader):
 class CatchMotionCommand(MotionCommand):
   """Track a robot motion while initializing and observing a physical ball."""
 
+  cfg: CatchMotionCommandCfg
   motion: CatchMotionLoader
 
   def __init__(self, cfg: CatchMotionCommandCfg, env: ManagerBasedRlEnv):
@@ -217,6 +219,21 @@ class CatchMotionCommand(MotionCommand):
       self._env.sim.forward()
     self._ball_visible_state[:] = current_visible
 
+  def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
+    """Draw the reference robot and recorded ball target."""
+    super()._debug_vis_impl(visualizer)
+    reference_positions = self.ball_reference_pos_w
+    visible = self.ball_visible
+    for env_idx in visualizer.get_env_indices(self.num_envs):
+      if not bool(visible[env_idx].item()):
+        continue
+      visualizer.add_sphere(
+        center=reference_positions[env_idx].detach().cpu().numpy(),
+        radius=self.cfg.reference_ball_viz_radius_m,
+        color=self.cfg.reference_ball_viz_color,
+        label=f"reference_ball_{env_idx}",
+      )
+
   def create_gui(
     self,
     name: str,
@@ -275,6 +292,15 @@ class CatchMotionCommand(MotionCommand):
 @dataclass(kw_only=True)
 class CatchMotionCommandCfg(MotionCommandCfg):
   ball_entity_name: str = "ball"
+  # Slightly larger than the 7.5 cm physical ball radius so the marker remains
+  # visible as a shell when the physical and reference balls coincide.
+  reference_ball_viz_radius_m: float = 0.0825
+  reference_ball_viz_color: tuple[float, float, float, float] = (
+    0.1,
+    0.55,
+    1.0,
+    0.4,
+  )
 
   def build(self, env: ManagerBasedRlEnv) -> CatchMotionCommand:
     return CatchMotionCommand(self, env)
