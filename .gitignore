@@ -9,7 +9,6 @@ __pycache__/
 artifacts/
 converted/
 converted_catch/
-data/
 logs/
 wandb/
 *.onnx
