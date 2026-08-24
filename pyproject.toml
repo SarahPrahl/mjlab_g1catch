@@ -38,7 +38,6 @@ constraint-dependencies = [
   "lxml>=6.1.0",
 ]
 required-environments = [
-  "sys_platform == 'darwin' and platform_machine == 'arm64'",
   "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 

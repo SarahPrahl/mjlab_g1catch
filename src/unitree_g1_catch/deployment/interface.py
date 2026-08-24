@@ -50,7 +50,8 @@ POLICY_ACTION_JOINT_NAMES = (
   "r_ih_pinky_proximal",
 )
 
-# Unitree G1 low-level motor IDs 0..28, as used by the official deployment config.
+# Source: https://github.com/unitreerobotics/unitree_rl_mjlab
+# Unitree G1 low-level motor IDs 0..28.
 G1_MOTOR_JOINT_NAMES = (
   "left_hip_pitch_joint",
   "left_hip_roll_joint",
@@ -83,7 +84,8 @@ G1_MOTOR_JOINT_NAMES = (
   "right_wrist_yaw_joint",
 )
 
-# Unitree's RH56DFX DDS order: right pinky/ring/middle/index/bend/rotation,
+# Source: https://github.com/unitreerobotics/dfx_inspire_service
+# Unitree RH56DFX DDS order: right pinky/ring/middle/index/bend/rotation,
 # followed by the same six motors for the left hand.
 DFX_INSPIRE_JOINT_NAMES = (
   "r_ih_pinky_proximal",

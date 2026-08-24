@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Minimal conversion and validation pipeline for retargeted Unitree G1 motions."""
 
 from __future__ import annotations
@@ -716,7 +715,7 @@ def build_parser() -> argparse.ArgumentParser:
   catch_parser.add_argument(
     "--output-dir", type=_path, default=PROJECT_ROOT / "converted_catch"
   )
-  catch_parser.add_argument("--pattern", default="*_filtered_g1.npz")
+  catch_parser.add_argument("--pattern", default="*.npz")
   catch_parser.add_argument("--output-fps", type=float, default=50.0)
   catch_parser.add_argument("--ground-clearance", type=float, default=0.005)
   catch_parser.add_argument("--device", default="cpu")

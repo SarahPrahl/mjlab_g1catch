@@ -1,6 +1,5 @@
 """Unitree G1 with Inspire-hand constants and model loading."""
 
-import os
 from pathlib import Path
 
 import mujoco
@@ -17,13 +16,9 @@ from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-G1_INSPIRE_MODEL_DIR = Path(
-  os.environ.get(
-    "G1_INSPIRE_MODEL_DIR",
-    REPOSITORY_ROOT / "third_party" / "unitree_g1_inspire",
-  )
-).expanduser()
-G1_INSPIRE_XML = G1_INSPIRE_MODEL_DIR / "g1_29dof_inspire_hand.xml"
+G1_INSPIRE_XML = (
+  REPOSITORY_ROOT / "third_party" / "unitree_g1_inspire" / "g1_29dof_inspire_hand.xml"
+)
 
 FINGER_ACTUATOR_EXPR = (
   "[lr]_ih_thumb_proximal_(yaw|pitch)",
@@ -36,8 +31,7 @@ def get_spec() -> mujoco.MjSpec:
   if not G1_INSPIRE_XML.exists():
     raise FileNotFoundError(
       f"Missing Inspire-hand submodule asset: {G1_INSPIRE_XML}. "
-      "Run `git submodule update --init --recursive`, or set "
-      "G1_INSPIRE_MODEL_DIR to the model checkout."
+      "Run `git submodule update --init --recursive`."
     )
 
   spec = mujoco.MjSpec.from_file(str(G1_INSPIRE_XML))
@@ -142,11 +136,3 @@ def get_g1_inspire_robot_cfg() -> EntityCfg:
 G1_INSPIRE_ACTION_SCALE = dict(G1_ACTION_SCALE)
 for expr in FINGER_ACTUATOR_EXPR:
   G1_INSPIRE_ACTION_SCALE[expr] = 0.5
-
-
-if __name__ == "__main__":
-  import mujoco.viewer as viewer
-  from mjlab.entity import Entity
-
-  robot = Entity(get_g1_inspire_robot_cfg())
-  viewer.launch(robot.spec.compile())

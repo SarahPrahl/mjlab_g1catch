@@ -24,7 +24,6 @@ resolution-markers = [
     "python_full_version < '3.11' and extra != 'extra-16-unitree-g1-catch-cpu' and extra != 'extra-16-unitree-g1-catch-cu128'",
 ]
 required-markers = [
-    "platform_machine == 'arm64' and sys_platform == 'darwin'",
     "platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 conflicts = [[

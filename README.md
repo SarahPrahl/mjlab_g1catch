@@ -17,7 +17,7 @@ of 0.112 kg.
 - Install [uv](https://docs.astral.sh/uv/).
 - Use Linux x86-64 and an NVIDIA GPU for training.
 
-Initialize the model and deployment-reference submodules:
+Initialize the submodules:
 
 ```bash
 git submodule update --init --recursive
@@ -35,16 +35,16 @@ For CPU use, instead install this environment:
 uv sync --extra cpu
 ```
 
-The repository excludes motion data, converted datasets, checkpoints, and logs.
-Transfer these files separately.
+The repository includes the source NPZ files in `data/`. It excludes converted
+datasets, checkpoints, and logs.
 
 ## Prepare the motion data
 
-Put the retargeted NPZ files in `data/`. By default, the converter selects files
-that match `*_filtered_g1.npz`.
+Put the retargeted NPZ files in `data/`. The converter selects all NPZ files by
+default.
 
 ```bash
-uv run g1-catch convert-catch --overwrite
+uv run g1-catch convert-catch
 ```
 
 The converter validates the input, converts each clip, and writes the merged
@@ -175,8 +175,8 @@ actor does not use this data.
 | `tasks/rl_cfg.py`         | PPO and actor configuration                       |
 | `tasks/runner.py`         | Stage 1 to stage 2 actor transfer                 |
 | `cli.py`                  | mjlab train and play wrappers                     |
-| `third_party/`            | Robot models and Unitree deployment references    |
-| `typings/`                | MuJoCo type stubs for static checks               |
+| `third_party/`            | G1 with Inspire hands model submodule             |
+| `typings/`                | MuJoCo type stubs used by `ty`              |
 
 The `deployment` package only maps policy actions to hardware joint order. This
 repository does not include a complete real-robot controller yet.
