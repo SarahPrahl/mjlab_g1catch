@@ -1,185 +1,194 @@
-# Unitree G1 reactive ball catching
+# Unitree G1 catch
 
-This is the standalone version of the working `mjlab` G1 + Inspire-hand
-motion-imitation experiment. It extends `mjlab` as an ordinary Python package;
-it does not modify or vendor mjlab source files.
+This package adds a ball-catching task to
+[mjlab](https://mujocolab.github.io/mjlab/main/index.html). It uses the Unitree
+G1 model with Inspire hands.
 
-The registered task is `Mjlab-Catch-Flat-Unitree-G1-Inspire`. Its actor receives
-only live robot and ball state (140 values) and outputs 41 normalized
-joint-position actions: 29 G1 body joints and 12 independently driven Inspire
-joints. mjlab converts them to position targets with the configured scale and
-default offset. The critic and reward functions may use the complete reference
-motion during PPO training.
+The project has two training stages:
 
-The ball is a dynamic MuJoCo sphere with a diameter of 0.15 m and a mass of
-0.112 kg. It collides with the robot and ground; the recorded trajectory is a
-training reference, not a visual-only animation.
+1. Stage 1 tracks retargeted catch recordings.
+2. Stage 2 starts from the stage 1 actor and learns from simulated ball throws.
 
-During training, 75% of environments use a flat floor and 25% use smooth,
-millimetre-scale floor undulations. Playback and motion conversion remain flat
-and deterministic.
+The environment uses a dynamic MuJoCo ball with a diameter of 0.15 m and a mass
+of 0.112 kg.
 
-## Repository boundaries
+## Requirements
 
-- `mjlab==1.6.0` is a normal uv dependency and supplies simulation, the stock
-  tracking environment, PPO, viewers, and ONNX export.
-- `third_party/unitree_g1_inspire` is the pinned simulation model. Its upstream
-  repository currently has no open-source license file, so confirm its terms
-  before redistribution.
-- `third_party/unitree_rl_mjlab` is Unitree's pinned official integration
-  reference. It is not imported into training because it pins mjlab 1.2.0. Its
-  G1 motor constants match mjlab 1.6.0; its `unitree_sdk2`/C++ deployment path is
-  the basis for a later real-robot adapter.
-- `third_party/dfx_inspire_service` is Unitree's official 12-motor RH56DFX hand
-  controller and defines the DDS command/state order used by our deployment map.
+- Install [uv](https://docs.astral.sh/uv/).
+- Use Linux x86-64 and an NVIDIA GPU for training.
 
-Initialize all submodules after cloning:
+Initialize the model and deployment-reference submodules:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## Install
-
-macOS evaluation/conversion:
-
-```bash
-uv sync --extra cpu
-```
-
-Linux training with CUDA 12.8 wheels:
+Install the CUDA environment on the training computer:
 
 ```bash
 uv sync --extra cu128
 ```
 
-Training requires an NVIDIA GPU. Conversion and playback work on CPU.
-
-## Data conversion
-
-The source recordings are not assumed to use mjlab's schema. Convert them with:
+For CPU use, instead install this environment:
 
 ```bash
-uv run g1-catch convert-catch \
-  --input ../data \
-  --output-dir ../converted_catch \
-  --overwrite
+uv sync --extra cpu
 ```
 
-The converter validates the actual arrays, resamples to 50 Hz, maps all recorded
-finger joints, enforces the Inspire mechanical couplings, grounds the motion with
-the real collision geometry, transforms the ball consistently, derives MuJoCo
-body states, and writes clip-boundary metadata. The merged result is
-`../converted_catch/g1_inspire_catch_dataset.npz`.
+The repository excludes motion data, converted datasets, checkpoints, and logs.
+Transfer these files separately.
 
-## Train and play
+## Prepare the motion data
 
-The wrappers register this external task and then call mjlab's unmodified CLIs:
+Put the retargeted NPZ files in `data/`. By default, the converter selects files
+that match `*_filtered_g1.npz`.
+
+```bash
+uv run g1-catch convert-catch --overwrite
+```
+
+The converter validates the input, converts each clip, and writes the merged
+dataset to `converted_catch/g1_inspire_catch_dataset.npz`. Use
+`uv run g1-catch convert-catch --help` to change the paths or file pattern.
+
+## Train stage 1
+
+Stage 1 uses the recordings as reference motions. Training uses a mix of flat
+floors and small floor variations.
 
 ```bash
 uv run g1-catch-train Mjlab-Catch-Flat-Unitree-G1-Inspire \
   --env.commands.motion.motion-file \
-    ../converted_catch/g1_inspire_catch_dataset.npz \
-  --env.scene.num-envs 4096
+    converted_catch/g1_inspire_catch_dataset.npz \
+  --env.scene.num-envs 2048 \
+  --agent.logger tensorboard
 ```
 
-The mjlab default logger is W&B. Add `--agent.logger tensorboard` for an entirely
-local run.
+## Train stage 2
+
+Stage 2 does not use a motion file. It creates physical ball throws and trains a
+new critic. It loads only the actor and its observation normalizer from stage 1.
+
+```bash
+uv run g1-catch-train Mjlab-Catch-Throws-Unitree-G1-Inspire \
+  --agent.pretrained-actor-checkpoint \
+    path/to/stage-1/model_N.pt \
+  --env.scene.num-envs 2048 \
+  --agent.logger tensorboard
+```
+
+Do not use `--agent.resume` for the first stage 2 run. Use it only to continue a
+stage 2 run.
+
+Training writes checkpoints and logs below `logs/rsl_rl/`. Start TensorBoard at
+any time:
+
+```bash
+uv run tensorboard --logdir logs/rsl_rl --port 6006
+```
+
+## Play a checkpoint
+
+Play a stage 1 checkpoint with a converted clip or with the merged dataset:
 
 ```bash
 uv run g1-catch-play Mjlab-Catch-Flat-Unitree-G1-Inspire \
-  --checkpoint-file /absolute/path/to/model_N.pt \
-  --motion-file \
-    ../converted_catch/example/example_catch_mjlab.npz \
-  --viewer viser --device cpu
+  --checkpoint-file path/to/model_N.pt \
+  --motion-file converted_catch/g1_inspire_catch_dataset.npz \
+  --viewer viser
 ```
 
-When the merged dataset is selected, Viser includes a named clip dropdown. PPO
-samples all clips; the dropdown only selects what the single interactive rollout
-shows.
+Play a stage 2 checkpoint:
 
-## Code map
+```bash
+uv run g1-catch-play Mjlab-Catch-Throws-Unitree-G1-Inspire \
+  --checkpoint-file path/to/model_N.pt \
+  --viewer viser
+```
 
-- `assets/g1_inspire.py` loads the pinned combined MJCF, replaces its motors with
-  mjlab position actuators, and adds the 12 independent finger actions.
-- `mdp/commands.py` extends mjlab's motion command with physical-ball arrays,
-  clip boundaries, ball spawning, and the Viser clip selector.
-- `mdp/observations.py` exposes live torso-relative ball state to the actor and
-  reference ball state to the critic.
-- `mdp/rewards.py` defines ball tracking, palm proximity, and hand contact terms.
-- `tasks/env_cfg.py` composes those additions with mjlab's tracking environment.
-- `tasks/rl_cfg.py` configures the existing RSL-RL PPO runner.
-- `motions/pipeline.py` validates and converts the retargeted NPZ recordings.
+The command prints the Viser URL. Add `--device cpu` for CPU playback.
+
+## Use the remote workstation
+
+Connect to the workstation and go to the repository:
+
+```bash
+ssh workstation
+cd path/to/clone
+```
+
+Replace `workstation` with the SSH target or alias.
+
+Start a play command from the previous section. Keep that terminal open. Start
+TensorBoard in a second workstation terminal if you need metrics:
+
+```bash
+uv run tensorboard --logdir logs/rsl_rl --port 6006
+```
+
+On the local computer, open one tunnel for both services:
+
+```bash
+ssh -N \
+  -L 8080:127.0.0.1:8080 \
+  -L 6006:127.0.0.1:6006 \
+  workstation
+```
+
+Open <http://localhost:8080> for Viser. Open <http://localhost:6006> for
+TensorBoard.
 
 ## Policy interface
 
-The actor's 140 inputs are concatenated in this order:
+Both actors use the same 136-value observation:
 
-| Observation | Size |
-| --- | ---: |
-| Base linear velocity | 3 |
-| Base angular velocity | 3 |
-| Projected gravity | 3 |
-| Torso height | 1 |
-| Joint positions | 41 |
-| Joint velocities | 41 |
-| Previous action | 41 |
-| Torso-relative ball position | 3 |
-| Torso-relative ball velocity | 3 |
-| Ball visibility | 1 |
+| Observation                         | Values |
+| ----------------------------------- | -----: |
+| Base angular velocity               |      3 |
+| Projected gravity                   |      3 |
+| Joint positions                     |     41 |
+| Joint velocities                    |     41 |
+| Previous action                     |     41 |
+| Ball position relative to the torso |      3 |
+| Ball velocity relative to the torso |      3 |
+| Ball visibility                     |      1 |
 
-The actor is an MLP with hidden dimensions `(512, 256, 128)` and ELU
-activations. Its 41 normalized outputs become joint-position targets after
-mjlab applies per-joint scales and default-position offsets. Reference robot and
-ball states are privileged training information used only by the critic and
-rewards.
+The actor is an MLP with layers of 512, 256, and 128 units. It uses ELU
+activations. It outputs 41 normalized joint-position actions for the G1 body and
+the Inspire hands.
 
-## Real-robot boundary
+The critic and the rewards can use privileged simulation or reference data. The
+actor does not use this data.
 
-The policy's deployment output must be split **by joint name**, then reordered for
-the two hardware APIs:
+## Project structure
 
-```text
-41 policy actions in combined-MJCF order
-├── named 29 G1 actions -> G1 motor-ID order -> Unitree SDK2
-└── named 12 hand actions -> DFX right/left DDS order -> rt/inspire/cmd
-```
+| Path                      | Purpose                                           |
+| ------------------------- | ------------------------------------------------- |
+| `assets/g1_inspire.py`    | Robot, actuators, and hand collision model        |
+| `deployment/interface.py` | Policy-to-hardware joint order                    |
+| `mdp/commands.py`         | Recorded motions and simulated throws             |
+| `mdp/observations.py`     | Actor and critic input functions                  |
+| `mdp/rewards.py`          | Reward functions                                  |
+| `mdp/terminations.py`     | Stage 2 success test                              |
+| `motions/pipeline.py`     | NPZ validation and conversion                     |
+| `tasks/env_cfg.py`        | Environments, ball model, terrain, and task terms |
+| `tasks/rl_cfg.py`         | PPO and actor configuration                       |
+| `tasks/runner.py`         | Stage 1 to stage 2 actor transfer                 |
+| `cli.py`                  | mjlab train and play wrappers                     |
+| `third_party/`            | Robot models and Unitree deployment references    |
+| `typings/`                | MuJoCo type stubs for static checks               |
 
-The hand joints occur between the left and right arm joints in the policy vector,
-so a contiguous `[:29]`/`[29:]` split is wrong. The name-based permutations live in
-`unitree_g1_catch.deployment`. They operate on raw normalized actions; the real
-controller must still reproduce mjlab's per-joint scaling, default offsets,
-clipping, and encoder-bias convention.
+The `deployment` package only maps policy actions to hardware joint order. This
+repository does not include a complete real-robot controller yet.
 
-Real deployment also needs a synchronized 140-value observation adapter in the
-same named joint order, using G1 joint/IMU state and an external 3D ball tracker.
-The reference-motion-only values used by the critic are not needed on the robot.
-Before physical deployment, compare observation order, normalization, action
-scales, offsets, and clipping with `third_party/unitree_rl_mjlab/deploy/robots/g1`,
-then validate the controller in its integrated `unitree_mujoco` path.
-
-## Generated MuJoCo type stubs
-
-MuJoCo exposes most of its Python API from compiled extension modules without
-distributing type stubs. This repository checks in stubs generated from the
-locked MuJoCo version so ty can resolve that API.
-
-Regenerate them after updating MuJoCo or the pinned stub generator:
-
-```bash
-bash typings/generate_mujoco_stubs.sh
-```
-
-The workflow is adapted from mjlab's own stub generator. It uses a pinned
-`pybind11-stubgen`, then removes platform-specific rendering bindings and other
-machine-dependent output so `typings/mujoco` is reproducible on macOS and Linux.
+For the framework design and command options, read the mjlab
+[architecture guide](https://mujocolab.github.io/mjlab/main/source/architecture_overview.html)
+and [RSL-RL training guide](https://mujocolab.github.io/mjlab/main/source/training/rsl_rl.html).
 
 ## Checks
 
 ```bash
-uv run ruff format --check
+uv run ruff format
 uv run ruff check
-bash typings/generate_mujoco_stubs.sh
-git diff --exit-code -- typings/mujoco
 uv run ty check
 ```

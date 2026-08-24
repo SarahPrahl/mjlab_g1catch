@@ -3,10 +3,17 @@
 from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 
-from unitree_g1_catch import TASK_ID
+from unitree_g1_catch import TASK_ID, THROW_TASK_ID
 
-from .env_cfg import unitree_g1_inspire_catch_env_cfg
-from .rl_cfg import unitree_g1_inspire_catch_ppo_runner_cfg
+from .env_cfg import (
+  unitree_g1_inspire_catch_env_cfg,
+  unitree_g1_inspire_throw_env_cfg,
+)
+from .rl_cfg import (
+  unitree_g1_inspire_catch_ppo_runner_cfg,
+  unitree_g1_inspire_throw_ppo_runner_cfg,
+)
+from .runner import ThrowOnPolicyRunner
 
 register_mjlab_task(
   task_id=TASK_ID,
@@ -14,4 +21,12 @@ register_mjlab_task(
   play_env_cfg=unitree_g1_inspire_catch_env_cfg(play=True),
   rl_cfg=unitree_g1_inspire_catch_ppo_runner_cfg(),
   runner_cls=MotionTrackingOnPolicyRunner,
+)
+
+register_mjlab_task(
+  task_id=THROW_TASK_ID,
+  env_cfg=unitree_g1_inspire_throw_env_cfg(),
+  play_env_cfg=unitree_g1_inspire_throw_env_cfg(play=True),
+  rl_cfg=unitree_g1_inspire_throw_ppo_runner_cfg(),
+  runner_cls=ThrowOnPolicyRunner,
 )

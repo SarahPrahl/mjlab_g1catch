@@ -49,7 +49,9 @@ def get_spec() -> mujoco.MjSpec:
 
   # Hand links contain both a visible mesh and a transparent collision mesh.
   # Disable contact on the duplicate visible mesh, retaining the collision mesh
-  # and palm primitives. This avoids duplicate contact constraints on the ball.
+  # and palm primitives. Active hand colliders live in geometry group 3 and are
+  # orange so Viser can reveal the exact physics geometry without showing it by
+  # default (geometry groups 3-5 start hidden).
   geom_counts: dict[str, int] = {}
   for geom in spec.geoms:
     body_name = geom.parent.name
@@ -63,6 +65,10 @@ def get_spec() -> mujoco.MjSpec:
     if is_visible_contact_mesh:
       geom.contype = 0
       geom.conaffinity = 0
+
+    if is_hand and (geom.contype != 0 or geom.conaffinity != 0):
+      geom.group = 3
+      geom.rgba = (1.0, 0.25, 0.0, 0.35)
 
     geom_counts[body_name] = geom_counts.get(body_name, 0) + 1
     kind = "collision" if geom.contype != 0 or geom.conaffinity != 0 else "visual"

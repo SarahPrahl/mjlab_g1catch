@@ -7,14 +7,19 @@ from typing import TYPE_CHECKING, cast
 import torch
 from mjlab.utils.lab_api.math import quat_apply, quat_inv
 
-from .commands import CatchMotionCommand
+from .commands import BallThrowCommand, CatchMotionCommand
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 
-def _command(env: ManagerBasedRlEnv, command_name: str) -> CatchMotionCommand:
-  return cast(CatchMotionCommand, env.command_manager.get_term(command_name))
+def _command(
+  env: ManagerBasedRlEnv, command_name: str
+) -> CatchMotionCommand | BallThrowCommand:
+  return cast(
+    CatchMotionCommand | BallThrowCommand,
+    env.command_manager.get_term(command_name),
+  )
 
 
 def ball_position_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
@@ -34,7 +39,7 @@ def ball_velocity_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
 
 
 def ball_visible(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-  """Return the reference tracker visibility flag as a scalar observation."""
+  """Return whether the physical ball is currently available to the tracker."""
   return _command(env, command_name).ball_visible.float().unsqueeze(-1)
 
 
@@ -48,6 +53,7 @@ def robot_anchor_height(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
 def reference_ball_state_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   """Privileged reference ball state relative to the reference anchor."""
   command = _command(env, command_name)
+  assert isinstance(command, CatchMotionCommand)
   position_w = command.ball_reference_pos_w - command.anchor_pos_w
   velocity_w = command.ball_reference_lin_vel_w - command.anchor_lin_vel_w
   inverse_anchor = quat_inv(command.anchor_quat_w)
