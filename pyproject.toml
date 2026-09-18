@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 g1-catch = "unitree_g1_catch.motions.pipeline:main"
 g1-catch-train = "unitree_g1_catch.cli:train_main"
+g1-catch-train-all = "unitree_g1_catch.cli:train_pipeline_main"
 g1-catch-play = "unitree_g1_catch.cli:play_main"
 
 [project.optional-dependencies]

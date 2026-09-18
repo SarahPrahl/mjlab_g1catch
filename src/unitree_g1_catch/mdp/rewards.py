@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from mjlab.entity import Entity
@@ -10,8 +10,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor
 from mjlab.utils.lab_api.string import resolve_matching_names_values
 
-from .commands import BallThrowCommand, CatchMotionCommand
-from .terminations import throw_missed
+from .commands import BallThrowCommand, CatchMotionCommand, RehearsalThrowCommand
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -27,6 +26,19 @@ def _command(
   )
 
 
+def rehearsal_reward(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  reward_func: Any,
+  **reward_params: Any,
+) -> torch.Tensor:
+  """Apply an existing phase-one reward only to rehearsal environments."""
+  command = _command(env, command_name)
+  assert isinstance(command, RehearsalThrowCommand)
+  value = reward_func(env, command_name=command_name, **reward_params)
+  return value * command.rehearsal_weight
+
+
 def _throw_command(env: ManagerBasedRlEnv, command_name: str) -> BallThrowCommand:
   command = _command(env, command_name)
   assert isinstance(command, BallThrowCommand)
@@ -38,7 +50,7 @@ def ball_position_tracking_exp(
 ) -> torch.Tensor:
   """Track the recorded ball trajectory after it becomes visible."""
   command = _command(env, command_name)
-  assert isinstance(command, CatchMotionCommand)
+  assert isinstance(command, (CatchMotionCommand, RehearsalThrowCommand))
   error = torch.sum(
     torch.square(command.ball_reference_pos_w - command.ball_pos_w), dim=-1
   )
@@ -50,7 +62,7 @@ def ball_velocity_tracking_exp(
 ) -> torch.Tensor:
   """Track the recorded ball linear velocity after it becomes visible."""
   command = _command(env, command_name)
-  assert isinstance(command, CatchMotionCommand)
+  assert isinstance(command, (CatchMotionCommand, RehearsalThrowCommand))
   error = torch.sum(
     torch.square(command.ball_reference_lin_vel_w - command.ball_lin_vel_w), dim=-1
   )
@@ -97,7 +109,12 @@ def palm_contact_reward(
   """Reward palm-face contacts whose normals point into the two-hand grasp."""
   command = _throw_command(env, command_name)
   score = 0.5 * (command.left_palm_contact.float() + command.right_palm_contact.float())
-  return score * command.catch_pose_score
+  return (
+    score
+    * command.ball_in_catch_zone.float()
+    * command.catch_pose_score
+    * command.synthetic_weight
+  )
 
 
 def finger_contact_reward(
@@ -105,16 +122,27 @@ def finger_contact_reward(
   command_name: str,
   left_sensor_name: str,
   right_sensor_name: str,
-  contacts_for_full_reward: int,
+  contacts_per_hand: int,
 ) -> torch.Tensor:
-  """Reward wrapping fingers around the ball after both true palms engage."""
+  """Reward distal finger contacts while both true palms hold the ball in-box."""
   command = _throw_command(env, command_name)
   left: ContactSensor = env.scene[left_sensor_name]
   right: ContactSensor = env.scene[right_sensor_name]
   assert left.data.found is not None and right.data.found is not None
-  contact_count = (left.data.found > 0).sum(dim=-1) + (right.data.found > 0).sum(dim=-1)
-  score = torch.clamp(contact_count.float() / contacts_for_full_reward, max=1.0)
-  return score * command.finger_grip_weight * command.catch_pose_score
+  left_score = torch.clamp(
+    (left.data.found > 0).sum(dim=-1).float() / contacts_per_hand, max=1.0
+  )
+  right_score = torch.clamp(
+    (right.data.found > 0).sum(dim=-1).float() / contacts_per_hand, max=1.0
+  )
+  score = 0.5 * (left_score + right_score)
+  return (
+    score
+    * (command.left_palm_contact & command.right_palm_contact).float()
+    * command.stable_grasp.float()
+    * command.catch_pose_score
+    * command.synthetic_weight
+  )
 
 
 class finger_posture_exp:
@@ -157,12 +185,13 @@ class finger_posture_exp:
     )
     return (
       torch.exp(-open_error / open_std**2) * command.finger_open_weight
-      + grip_score * command.finger_grip_weight
-    )
+      + grip_score * command.finger_grip_weight * command.ball_in_catch_zone.float()
+    ) * command.synthetic_weight
 
 
 def standing_posture_exp(
   env: ManagerBasedRlEnv,
+  command_name: str,
   target_height_m: float,
   tilt_std: float,
   height_std: float,
@@ -181,15 +210,19 @@ def standing_posture_exp(
     ),
     dim=-1,
   )
-  return torch.exp(
-    -tilt_error / tilt_std**2
-    - height_error / height_std**2
-    - posture_error / posture_std**2
+  return (
+    torch.exp(
+      -tilt_error / tilt_std**2
+      - height_error / height_std**2
+      - posture_error / posture_std**2
+    )
+    * _throw_command(env, command_name).synthetic_weight
   )
 
 
 def base_motion_l2(
   env: ManagerBasedRlEnv,
+  command_name: str,
   position_std: float,
   velocity_std: float,
   asset_cfg: SceneEntityCfg,
@@ -201,7 +234,7 @@ def base_motion_l2(
   return (
     torch.sum(torch.square(position), dim=-1) / position_std**2
     + torch.sum(torch.square(velocity), dim=-1) / velocity_std**2
-  )
+  ) * _throw_command(env, command_name).synthetic_weight
 
 
 def controlled_arm_posture_exp(
@@ -241,27 +274,12 @@ def controlled_arm_posture_exp(
     * command.pre_catch_pose_weight
   )
   holding = quiet_extended * command.stable_grasp.float()
-  return torch.maximum(ready, holding)
-
-
-def arms_above_head_l2(
-  env: ManagerBasedRlEnv,
-  head_height_offset_m: float,
-  height_std: float,
-  arm_cfg: SceneEntityCfg,
-  torso_cfg: SceneEntityCfg,
-) -> torch.Tensor:
-  """Penalize elbow, wrist, or hand links rising above the top of the head."""
-  robot: Entity = env.scene[arm_cfg.name]
-  arm_height = robot.data.body_link_pos_w[:, arm_cfg.body_ids, 2]
-  torso_height = robot.data.body_link_pos_w[:, torso_cfg.body_ids, 2].mean(dim=1)
-  head_height = torso_height + head_height_offset_m
-  excess = torch.relu(arm_height - head_height[:, None])
-  return torch.mean(torch.square(excess / height_std), dim=-1)
+  return torch.maximum(ready, holding) * command.synthetic_weight
 
 
 def arm_motion_l2(
   env: ManagerBasedRlEnv,
+  command_name: str,
   velocity_limit_rad_s: float,
   acceleration_limit_rad_s2: float,
   asset_cfg: SceneEntityCfg,
@@ -278,7 +296,9 @@ def arm_motion_l2(
   acceleration_cost = torch.mean(
     torch.square(acceleration_excess / acceleration_limit_rad_s2), dim=-1
   )
-  return velocity_cost + 0.25 * acceleration_cost
+  return (velocity_cost + 0.25 * acceleration_cost) * _throw_command(
+    env, command_name
+  ).synthetic_weight
 
 
 def interception_exp(
@@ -293,41 +313,29 @@ def interception_exp(
     -torch.square(command.ball_hand_relative_speed) / speed_std**2
   )
   proximity = torch.exp(-torch.square(command.ball_palm_distance) / distance_std**2)
-  return proximity * speed_score * command.ball_visible.float()
+  return (
+    proximity * speed_score * command.ball_visible.float() * command.synthetic_weight
+  )
 
 
 def catch_pose_reward(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   """Reward an upright, demonstration-like catch with the palms below the ball."""
-  return _throw_command(env, command_name).catch_pose_score
+  command = _throw_command(env, command_name)
+  return command.catch_pose_score * command.synthetic_weight
 
 
 def stable_grasp_reward(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   """Reward physically containing and slowing the ball after palm contact."""
   command = _throw_command(env, command_name)
-  return command.stable_grasp.float() * command.catch_pose_score
+  return (
+    command.stable_grasp.float() * command.catch_pose_score * command.synthetic_weight
+  )
 
 
 def catch_success_reward(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   """One terminal success pulse whose configured weight is independent of dt."""
-  return _throw_command(env, command_name).caught.float() / env.step_dt
-
-
-def throw_miss_penalty(
-  env: ManagerBasedRlEnv,
-  command_name: str,
-  minimum_ball_height_m: float,
-  maximum_ball_distance_m: float,
-) -> torch.Tensor:
-  """One terminal penalty when the launched ball hits the floor or escapes."""
-  return (
-    throw_missed(
-      env,
-      command_name,
-      minimum_ball_height_m,
-      maximum_ball_distance_m,
-    ).float()
-    / env.step_dt
-  )
+  command = _throw_command(env, command_name)
+  return command.caught.float() * command.synthetic_weight / env.step_dt
 
 
 def body_ball_contact_penalty(
@@ -337,4 +345,8 @@ def body_ball_contact_penalty(
   command = _throw_command(env, command_name)
   sensor: ContactSensor = env.scene[sensor_name]
   assert sensor.data.found is not None
-  return sensor.data.found.any(dim=-1).float() * command.ball_visible.float()
+  return (
+    sensor.data.found.any(dim=-1).float()
+    * command.ball_visible.float()
+    * command.synthetic_weight
+  )

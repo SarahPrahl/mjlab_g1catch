@@ -53,8 +53,8 @@ dataset to `converted_catch/g1_inspire_catch_dataset.npz`. Use
 
 ## Train stage 1
 
-Stage 1 uses the recordings as reference motions. Training uses a mix of flat
-floors and small floor variations.
+Stage 1 uses the recordings as reference motions. The first 2,500 iterations use
+flat floors; training then gradually mixes in 50% millimetre-scale variations.
 
 ```bash
 uv run g1-catch-train Mjlab-Catch-Flat-Unitree-G1-Inspire \
@@ -66,19 +66,40 @@ uv run g1-catch-train Mjlab-Catch-Flat-Unitree-G1-Inspire \
 
 ## Train stage 2
 
-Stage 2 does not use a motion file. It creates physical ball throws and trains a
-new critic. It loads only the actor and its observation normalizer from stage 1.
+Stage 2 mixes physical ball throws with 60% reference-motion rehearsal. It
+loads only the actor and its observation
+normalizer from stage 1.
+
+Synthetic catches only count while the ball center is inside the torso-relative
+catch box (height -0.05 to 0.37 m). Leaving it resets hold progress. Smooth
+approach shaping remains outside the box. Distal finger contacts earn a bonus
+only during a stable in-box grasp with both real palm faces touching; full bonus
+requires two distal finger links per hand. Finger opening fades out over 0.15 s
+after the first stable grasp. These rules do not change reference rehearsal.
 
 ```bash
 uv run g1-catch-train Mjlab-Catch-Throws-Unitree-G1-Inspire \
   --agent.pretrained-actor-checkpoint \
     path/to/stage-1/model_N.pt \
+  --env.commands.throw.motion-cfg.motion-file \
+    converted_catch/g1_inspire_catch_dataset.npz \
   --env.scene.num-envs 2048 \
   --agent.logger tensorboard
 ```
 
 Do not use `--agent.resume` for the first stage 2 run. Use it only to continue a
 stage 2 run.
+
+Train both stages sequentially and pass the final phase 1 actor to phase 2
+automatically:
+
+```bash
+uv run g1-catch-train-all \
+  --motion-file converted_catch/g1_inspire_catch_dataset.npz \
+  --phase-1-iterations 20000 \
+  --phase-2-iterations 20000 \
+  --num-envs 2048
+```
 
 Training writes checkpoints and logs below `logs/rsl_rl/`. Start TensorBoard at
 any time:

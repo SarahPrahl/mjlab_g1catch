@@ -114,8 +114,6 @@ class CatchMotionCommand(MotionCommand):
     self._ball_visible_state = torch.zeros(
       self.num_envs, dtype=torch.bool, device=self.device
     )
-    self.metrics["error_ball_pos"] = torch.zeros(self.num_envs, device=self.device)
-    self.metrics["error_ball_lin_vel"] = torch.zeros(self.num_envs, device=self.device)
 
   @property
   def ball_reference_pos_w(self) -> torch.Tensor:
@@ -136,16 +134,6 @@ class CatchMotionCommand(MotionCommand):
   @property
   def ball_lin_vel_w(self) -> torch.Tensor:
     return self.ball.data.root_link_lin_vel_w
-
-  def _update_metrics(self) -> None:
-    super()._update_metrics()
-    visible = self.ball_visible.float()
-    self.metrics["error_ball_pos"] = (
-      torch.norm(self.ball_reference_pos_w - self.ball_pos_w, dim=-1) * visible
-    )
-    self.metrics["error_ball_lin_vel"] = (
-      torch.norm(self.ball_reference_lin_vel_w - self.ball_lin_vel_w, dim=-1) * visible
-    )
 
   def _write_ball_reference_state(self, env_ids: torch.Tensor) -> None:
     visible = self.ball_visible[env_ids]
@@ -221,11 +209,11 @@ class CatchMotionCommand(MotionCommand):
       self.update_relative_body_poses()
 
     current_visible = self.ball_visible
-    spawn_ids = torch.where(~previous_visible & current_visible)[0]
+    spawn_ids = scoped_ids[~previous_visible[scoped_ids] & current_visible[scoped_ids]]
     if spawn_ids.numel() > 0:
       self._write_ball_reference_state(spawn_ids)
       self._env.sim.forward()
-    self._ball_visible_state[:] = current_visible
+    self._ball_visible_state[scoped_ids] = current_visible[scoped_ids]
 
   def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
     """Draw the reference robot and recorded ball target."""
@@ -282,7 +270,6 @@ class CatchMotionCommand(MotionCommand):
         if on_change is not None:
           on_change()
 
-      all_envs_cb = server.gui.add_checkbox("All envs", initial_value=True)
       start_btn = server.gui.add_button("Start Here")
 
       @start_btn.on_click
@@ -290,10 +277,10 @@ class CatchMotionCommand(MotionCommand):
         if request_action is not None:
           request_action(
             "CUSTOM",
-            {"type": "gui_reset", "all_envs": all_envs_cb.value},
+            {"type": "gui_reset"},
           )
 
-    self._scrubber_handles = (scrubber, all_envs_cb, start_btn, clip_dropdown)
+    self._scrubber_handles = (scrubber, start_btn, clip_dropdown)
     self._set_scrubber_disabled(True)
 
 
@@ -343,8 +330,8 @@ class BallThrowCommand(CommandTerm):
     self.spawn_offset_w = torch.zeros_like(self.target_offset_w)
     self._target_pos_w = torch.zeros_like(self.target_offset_w)
     self._spawn_pos_w = torch.zeros_like(self.target_offset_w)
-    self._launch_anchor_pos_w = torch.zeros_like(self.target_offset_w)
     self.launched = torch.zeros(shape, dtype=torch.bool, device=self.device)
+    self.ball_observation_occluded = torch.zeros_like(self.launched)
     self.left_palm_contact = torch.zeros_like(self.launched)
     self.right_palm_contact = torch.zeros_like(self.launched)
     self.stable_grasp = torch.zeros_like(self.launched)
@@ -362,9 +349,6 @@ class BallThrowCommand(CommandTerm):
     )
 
     self.metrics["catch_success"] = torch.zeros(shape, device=self.device)
-    self.metrics["palm_contact"] = torch.zeros(shape, device=self.device)
-    self.metrics["stable_grasp"] = torch.zeros(shape, device=self.device)
-    self.metrics["catch_pose"] = torch.zeros(shape, device=self.device)
     self.metrics["hold_progress"] = torch.zeros(shape, device=self.device)
     self.metrics["required_hold_time"] = torch.zeros(shape, device=self.device)
     self.metrics["throw_difficulty"] = torch.zeros(shape, device=self.device)
@@ -381,6 +365,10 @@ class BallThrowCommand(CommandTerm):
       ),
       dim=-1,
     )
+
+  @property
+  def synthetic_weight(self) -> torch.Tensor:
+    return torch.ones(self.num_envs, device=self.device)
 
   @property
   def robot_anchor_pos_w(self) -> torch.Tensor:
@@ -435,6 +423,19 @@ class BallThrowCommand(CommandTerm):
       dim=1
     )
     return torch.norm(self.ball_lin_vel_w - hand_velocity, dim=-1)
+
+  @property
+  def ball_in_catch_zone(self) -> torch.Tensor:
+    offset_b = quat_apply(
+      quat_inv(self.robot_anchor_quat_w), self.ball_pos_w - self.robot_anchor_pos_w
+    )
+    return (
+      (offset_b[:, 0] >= self.cfg.catch_x_range_m[0])
+      & (offset_b[:, 0] <= self.cfg.catch_x_range_m[1])
+      & (torch.abs(offset_b[:, 1]) <= self.cfg.catch_y_abs_max_m)
+      & (offset_b[:, 2] >= self.cfg.catch_z_range_m[0])
+      & (offset_b[:, 2] <= self.cfg.catch_z_range_m[1])
+    )
 
   @property
   def catch_pose_score(self) -> torch.Tensor:
@@ -550,11 +551,6 @@ class BallThrowCommand(CommandTerm):
 
   def _update_metrics(self) -> None:
     self.metrics["catch_success"][:] = self.caught.float()
-    self.metrics["palm_contact"][:] = 0.5 * (
-      self.left_palm_contact.float() + self.right_palm_contact.float()
-    )
-    self.metrics["stable_grasp"][:] = self.stable_grasp.float()
-    self.metrics["catch_pose"][:] = self.catch_pose_score
     self.metrics["hold_progress"][:] = torch.clamp(
       self.hold_steps.float() / self.required_hold_steps.float(), max=1.0
     )
@@ -626,6 +622,7 @@ class BallThrowCommand(CommandTerm):
     )
 
     self.launched[env_ids] = False
+    self.ball_observation_occluded[env_ids] = False
     self.stable_grasp[env_ids] = False
     self.caught[env_ids] = False
     self.hold_steps[env_ids] = 0
@@ -634,7 +631,6 @@ class BallThrowCommand(CommandTerm):
     self.finger_release_steps[env_ids] = 0
     self._target_pos_w[env_ids] = 0.0
     self._spawn_pos_w[env_ids] = 0.0
-    self._launch_anchor_pos_w[env_ids] = 0.0
     self.left_palm_contact[env_ids] = False
     self.right_palm_contact[env_ids] = False
 
@@ -670,7 +666,6 @@ class BallThrowCommand(CommandTerm):
     self.ball.reset(env_ids=env_ids)
     self._target_pos_w[env_ids] = target_pos
     self._spawn_pos_w[env_ids] = spawn_pos
-    self._launch_anchor_pos_w[env_ids] = anchor_pos
     self.launched[env_ids] = True
 
     # The environment has already forwarded before command updates. Refresh the
@@ -692,7 +687,13 @@ class BallThrowCommand(CommandTerm):
     )
     contained = self.ball_palm_distance < self.cfg.containment_radius_m
     slow = self.ball_hand_relative_speed < self.cfg.max_hold_relative_speed_mps
-    stable = self.launched & contained & slow & palm_contact_maintained
+    stable = (
+      self.launched
+      & contained
+      & slow
+      & palm_contact_maintained
+      & self.ball_in_catch_zone
+    )
     self.stable_grasp[env_ids] = stable[env_ids]
     self.finger_grip_latch[env_ids] |= stable[env_ids]
     self.finger_release_steps[env_ids] = torch.where(
@@ -720,6 +721,9 @@ class BallThrowCommand(CommandTerm):
     if launch_ids.numel() > 0:
       self._launch(launch_ids)
     self._update_grasp(scoped_ids)
+    self.ball_observation_occluded[scoped_ids] |= (
+      self.ball_in_catch_zone[scoped_ids] & self.ball_visible[scoped_ids]
+    )
     self._update_metrics()
 
   def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
@@ -751,16 +755,6 @@ class BallThrowCommand(CommandTerm):
           color=(0.1, 0.75, 0.9, 0.12),
           label=f"preferred_catch_zone_{env_idx}",
         )
-        support_target_w = self.palm_midpoint_w[env_idx] + torch.tensor(
-          (0.0, 0.0, self.cfg.support_target_height_m), device=self.device
-        )
-        visualizer.add_sphere(
-          center=support_target_w.detach().cpu().numpy(),
-          radius=0.018,
-          color=(0.2, 0.9, 0.35, 0.8),
-          label=f"palm_support_target_{env_idx}",
-        )
-
       spawn = self.spawn_pos_w[env_idx].detach().cpu().numpy()
       target = self.target_pos_w[env_idx].detach().cpu().numpy()
       visualizer.add_sphere(
@@ -773,63 +767,8 @@ class BallThrowCommand(CommandTerm):
         center=spawn,
         radius=0.025,
         color=(0.85, 0.1, 0.75, 0.65),
-        label=f"throw_source_{env_idx}",
+        label=f"throw_start_{env_idx}",
       )
-      visualizer.add_arrow(
-        start=spawn,
-        end=target,
-        color=(0.85, 0.1, 0.75, 0.8),
-        width=0.008,
-        label=f"throw_path_{env_idx}",
-      )
-      if self.launched[env_idx]:
-        forward_start = self._launch_anchor_pos_w[env_idx]
-        forward_end = forward_start + torch.tensor((0.75, 0.0, 0.0), device=self.device)
-        visualizer.add_arrow(
-          start=forward_start.detach().cpu().numpy(),
-          end=forward_end.detach().cpu().numpy(),
-          color=(0.9, 0.15, 0.1, 0.8),
-          width=0.008,
-          label=f"launch_forward_{env_idx}",
-        )
-
-      palm_pos_w = self.robot.data.site_pos_w[env_idx, self.palm_site_indexes]
-      palm_quat_w = self.robot.data.body_link_quat_w[env_idx, self.hand_body_indexes]
-      inward_normal_w = quat_apply(
-        palm_quat_w,
-        torch.tensor((-1.0, 0.0, 0.0), device=self.device).expand(2, -1),
-      )
-      for hand_index, side in enumerate(("left", "right")):
-        normal_start = palm_pos_w[hand_index]
-        normal_end = normal_start + 0.12 * inward_normal_w[hand_index]
-        visualizer.add_arrow(
-          start=normal_start.detach().cpu().numpy(),
-          end=normal_end.detach().cpu().numpy(),
-          color=(0.1, 0.8, 0.9, 0.85),
-          width=0.006,
-          label=f"{side}_palm_normal_{env_idx}",
-        )
-        sensor_name = (
-          self.cfg.left_palm_sensor_name
-          if hand_index == 0
-          else self.cfg.right_palm_sensor_name
-        )
-        active, accepted, positions = self._palm_face_contact_details(
-          sensor_name, hand_index
-        )
-        for contact_index in range(positions.shape[1]):
-          if not bool(active[env_idx, contact_index].item()):
-            continue
-          visualizer.add_sphere(
-            center=positions[env_idx, contact_index].detach().cpu().numpy(),
-            radius=0.012,
-            color=(
-              (0.1, 0.9, 0.2, 0.9)
-              if bool(accepted[env_idx, contact_index].item())
-              else (0.95, 0.1, 0.1, 0.9)
-            ),
-            label=f"{side}_palm_contact_{env_idx}_{contact_index}",
-          )
 
 
 @dataclass(kw_only=True)
@@ -843,16 +782,16 @@ class BallThrowCommandCfg(CommandTermCfg):
   right_palm_sensor_name: str = "right_palm_ball_contact"
   launch_delay_range_s: tuple[float, float] = (0.25, 0.5)
   target_x_range_m: tuple[float, float] = (0.35, 0.5)
-  target_z_center_m: float = 0.22
+  target_z_center_m: float = 0.17
   initial_target_y_range_m: float = 0.1
-  final_target_y_range_m: float = 0.25
+  final_target_y_range_m: float = 0.3
   initial_target_z_range_m: float = 0.05
-  final_target_z_range_m: float = 0.15
+  final_target_z_range_m: float = 0.18
   initial_azimuth_rad: float = math.radians(15.0)
   final_azimuth_rad: float = math.radians(75.0)
   distance_min_m: float = 1.5
   initial_distance_max_m: float = 2.0
-  final_distance_max_m: float = 3.0
+  final_distance_max_m: float = 5.0
   spawn_height_offset_range_m: tuple[float, float] = (-0.1, 0.15)
   launch_elevation_range_rad: tuple[float, float] = (
     math.radians(25.0),
@@ -863,7 +802,7 @@ class BallThrowCommandCfg(CommandTermCfg):
   max_hold_relative_speed_mps: float = 0.35
   catch_x_range_m: tuple[float, float] = (0.25, 0.6)
   catch_y_abs_max_m: float = 0.35
-  catch_z_range_m: tuple[float, float] = (0.0, 0.42)
+  catch_z_range_m: tuple[float, float] = (-0.05, 0.37)
   catch_zone_std_m: float = 0.1
   support_target_height_m: float = 0.075
   support_height_std_m: float = 0.08
@@ -873,7 +812,7 @@ class BallThrowCommandCfg(CommandTermCfg):
   initial_hold_time_s: float = 0.4
   final_hold_time_s: float = 2.0
   palm_contact_grace_time_s: float = 0.08
-  finger_open_release_time_s: float = 0.5
+  finger_open_release_time_s: float = 0.15
   contact_force_threshold_n: float = 0.1
   minimum_palm_normal_alignment: float = math.cos(math.radians(30.0))
   palm_face_x_range_m: tuple[float, float] = (-0.03, -0.008)
@@ -885,3 +824,122 @@ class BallThrowCommandCfg(CommandTermCfg):
 
   def build(self, env: ManagerBasedRlEnv) -> BallThrowCommand:
     return BallThrowCommand(self, env)
+
+
+class RehearsalThrowCommand(BallThrowCommand):
+  """Mix synthetic throws with recorded tracking episodes per environment."""
+
+  cfg: RehearsalThrowCommandCfg
+
+  def __init__(self, cfg: RehearsalThrowCommandCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+    self.reference = CatchMotionCommand(cfg.motion_cfg, env)
+    self.rehearsal = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+    self.metrics["rehearsal_fraction"] = torch.zeros(self.num_envs, device=self.device)
+
+  @property
+  def command(self) -> torch.Tensor:
+    return torch.cat((super().command, self.rehearsal[:, None].float()), dim=-1)
+
+  @property
+  def rehearsal_weight(self) -> torch.Tensor:
+    return self.rehearsal.float()
+
+  @property
+  def synthetic_weight(self) -> torch.Tensor:
+    return (~self.rehearsal).float()
+
+  @property
+  def ball_visible(self) -> torch.Tensor:
+    return torch.where(self.rehearsal, self.reference.ball_visible, self.launched)
+
+  @property
+  def ball_reference_pos_w(self) -> torch.Tensor:
+    return self.reference.ball_reference_pos_w
+
+  @property
+  def ball_reference_lin_vel_w(self) -> torch.Tensor:
+    return self.reference.ball_reference_lin_vel_w
+
+  @property
+  def anchor_pos_w(self) -> torch.Tensor:
+    return self.reference.anchor_pos_w
+
+  @property
+  def anchor_quat_w(self) -> torch.Tensor:
+    return self.reference.anchor_quat_w
+
+  @property
+  def body_pos_relative_w(self) -> torch.Tensor:
+    return self.reference.body_pos_relative_w
+
+  @property
+  def body_quat_relative_w(self) -> torch.Tensor:
+    return self.reference.body_quat_relative_w
+
+  @property
+  def body_lin_vel_w(self) -> torch.Tensor:
+    return self.reference.body_lin_vel_w
+
+  @property
+  def body_ang_vel_w(self) -> torch.Tensor:
+    return self.reference.body_ang_vel_w
+
+  @property
+  def robot_body_pos_w(self) -> torch.Tensor:
+    return self.reference.robot_body_pos_w
+
+  @property
+  def robot_body_quat_w(self) -> torch.Tensor:
+    return self.reference.robot_body_quat_w
+
+  @property
+  def robot_body_lin_vel_w(self) -> torch.Tensor:
+    return self.reference.robot_body_lin_vel_w
+
+  @property
+  def robot_body_ang_vel_w(self) -> torch.Tensor:
+    return self.reference.robot_body_ang_vel_w
+
+  def _resample_command(self, env_ids: torch.Tensor) -> None:
+    super()._resample_command(env_ids)
+    self.rehearsal[env_ids] = (
+      torch.rand(len(env_ids), device=self.device) < self.cfg.rehearsal_fraction
+    )
+    reference_ids = env_ids[self.rehearsal[env_ids]]
+    if reference_ids.numel() > 0:
+      self.reference._resample_command(reference_ids)
+      self.reference._pending_forward = False
+
+  def _update_metrics(self) -> None:
+    super()._update_metrics()
+    self.metrics["rehearsal_fraction"][:] = self.rehearsal.float()
+
+  def _update_command(self, env_ids: torch.Tensor | None) -> None:
+    scoped_ids = (
+      torch.arange(self.num_envs, device=self.device) if env_ids is None else env_ids
+    )
+    reference_ids = scoped_ids[self.rehearsal[scoped_ids]]
+    synthetic_ids = scoped_ids[~self.rehearsal[scoped_ids]]
+    if reference_ids.numel() > 0:
+      self.reference._update_command(reference_ids)
+    if synthetic_ids.numel() > 0:
+      super()._update_command(synthetic_ids)
+    else:
+      self._update_metrics()
+    self.ball_observation_occluded[reference_ids] |= (
+      self.ball_in_catch_zone[reference_ids] & self.ball_visible[reference_ids]
+    )
+
+
+@dataclass(kw_only=True)
+class RehearsalThrowCommandCfg(BallThrowCommandCfg):
+  motion_cfg: CatchMotionCommandCfg
+  rehearsal_fraction: float = 0.6
+
+  @property
+  def body_names(self) -> tuple[str, ...]:
+    return self.motion_cfg.body_names
+
+  def build(self, env: ManagerBasedRlEnv) -> RehearsalThrowCommand:
+    return RehearsalThrowCommand(self, env)

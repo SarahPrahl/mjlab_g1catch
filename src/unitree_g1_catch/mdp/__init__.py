@@ -2,13 +2,14 @@ from .commands import BallThrowCommand as BallThrowCommand
 from .commands import BallThrowCommandCfg as BallThrowCommandCfg
 from .commands import CatchMotionCommand as CatchMotionCommand
 from .commands import CatchMotionCommandCfg as CatchMotionCommandCfg
+from .commands import RehearsalThrowCommandCfg as RehearsalThrowCommandCfg
+from .curriculums import terrain_mix as terrain_mix
 from .observations import ball_position_b as ball_position_b
 from .observations import ball_velocity_b as ball_velocity_b
 from .observations import ball_visible as ball_visible
 from .observations import reference_ball_state_b as reference_ball_state_b
 from .observations import robot_anchor_height as robot_anchor_height
 from .rewards import arm_motion_l2 as arm_motion_l2
-from .rewards import arms_above_head_l2 as arms_above_head_l2
 from .rewards import ball_contact_reward as ball_contact_reward
 from .rewards import ball_position_tracking_exp as ball_position_tracking_exp
 from .rewards import ball_velocity_tracking_exp as ball_velocity_tracking_exp
@@ -22,8 +23,9 @@ from .rewards import finger_posture_exp as finger_posture_exp
 from .rewards import interception_exp as interception_exp
 from .rewards import palm_ball_proximity_exp as palm_ball_proximity_exp
 from .rewards import palm_contact_reward as palm_contact_reward
+from .rewards import rehearsal_reward as rehearsal_reward
 from .rewards import stable_grasp_reward as stable_grasp_reward
 from .rewards import standing_posture_exp as standing_posture_exp
-from .rewards import throw_miss_penalty as throw_miss_penalty
 from .terminations import catch_succeeded as catch_succeeded
+from .terminations import rehearsal_termination as rehearsal_termination
 from .terminations import throw_missed as throw_missed
