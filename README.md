@@ -147,6 +147,9 @@ uv run g1-catch-play Mjlab-Catch-Throws-Unitree-G1-Inspire \
 ```
 
 The command prints the Viser URL. Add `--device cpu` for CPU playback.
+For stage 2, open **Controls → Commands → Throw** and use **Catch / Hold** (1),
+**Rest / Release** (0), or **Auto** (the episode schedule). Manual mode applies
+on the next simulation step to all environments and persists across resets.
 
 ## Use the remote workstation
 

@@ -746,6 +746,39 @@ class BallThrowCommand(CommandTerm):
       elapsed < self.disable_time[env_ids]
     )
 
+  def create_gui(
+    self,
+    name: str,
+    server: viser.ViserServer,
+    get_env_idx: Callable[[], int],
+    on_change: Callable[[], None] | None = None,
+    request_action: Callable[[str, Any], None] | None = None,
+  ) -> None:
+    """Select the catch override; the simulation applies it on its next step."""
+    modes = {"Auto": None, "Catch / Hold": True, "Rest / Release": False}
+    with server.gui.add_folder(name.capitalize()):
+      selected = server.gui.add_text(
+        "Selected mode",
+        initial_value=next(
+          label
+          for label, value in modes.items()
+          if value is self.cfg.catch_enabled_override
+        ),
+        disabled=True,
+      )
+      buttons = server.gui.add_button_group(
+        "Set mode",
+        options=tuple(modes),
+        hint="Applies to all synthetic environments and persists across resets.",
+      )
+
+      @buttons.on_click
+      def _(event) -> None:
+        self.cfg.catch_enabled_override = modes[event.target.value]
+        selected.value = event.target.value
+        if on_change is not None:
+          on_change()
+
   def _update_command(self, env_ids: torch.Tensor | None) -> None:
     scoped_ids = (
       torch.arange(self.num_envs, device=self.device) if env_ids is None else env_ids
