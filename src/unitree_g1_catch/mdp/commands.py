@@ -336,6 +336,11 @@ class BallThrowCommand(CommandTerm):
     self.right_palm_contact = torch.zeros_like(self.launched)
     self.stable_grasp = torch.zeros_like(self.launched)
     self.caught = torch.zeros_like(self.launched)
+    self.catch_enabled = torch.zeros_like(self.launched)
+    self.catch_success_pulse = torch.zeros_like(self.launched)
+    self.enable_time = torch.zeros(shape, device=self.device)
+    self.disable_time = torch.full(shape, torch.inf, device=self.device)
+    self.hold_after_catch = torch.zeros(shape, device=self.device)
     self.hold_steps = torch.zeros(shape, device=self.device)
     self.required_hold_steps = torch.ones(shape, device=self.device)
     self.contact_loss_steps = torch.zeros(shape, dtype=torch.long, device=self.device)
@@ -362,6 +367,7 @@ class BallThrowCommand(CommandTerm):
         self.difficulty[:, None],
         self.launched[:, None].float(),
         self.caught[:, None].float(),
+        self.catch_enabled[:, None].float(),
       ),
       dim=-1,
     )
@@ -468,6 +474,7 @@ class BallThrowCommand(CommandTerm):
       )
       * torch.exp(-tilt_error / math.sin(self.cfg.maximum_catch_tilt_rad) ** 2)
       * self.ball_visible.float()
+      * self.catch_enabled.float()
     )
 
   @property
@@ -486,14 +493,14 @@ class BallThrowCommand(CommandTerm):
     """Keep fingers open until the ball is stably contained, then fade out."""
     window = max(1, self._finger_release_window_steps)
     ramp = 1.0 - torch.clamp(self.finger_release_steps.float() / window, max=1.0)
-    return (~self.caught).float() * ramp
+    return torch.where(self.catch_enabled, ramp, 1.0)
 
   @property
   def finger_grip_weight(self) -> torch.Tensor:
     """Fade in a gentle stabilizing grip after the first stable grasp."""
     window = max(1, self._finger_release_window_steps)
     ramp = torch.clamp(self.finger_release_steps.float() / window, max=1.0)
-    return (~self.caught).float() * self.finger_grip_latch.float() * ramp
+    return self.catch_enabled.float() * self.finger_grip_latch.float() * ramp
 
   def _palm_face_contact_details(
     self, sensor_name: str, hand_index: int
@@ -620,6 +627,23 @@ class BallThrowCommand(CommandTerm):
     self.launch_delay[env_ids] = sample_uniform(
       *self.cfg.launch_delay_range_s, (num,), self.device
     )
+    self.enable_time[env_ids] = sample_uniform(
+      *self.cfg.idle_time_range_s, (num,), self.device
+    )
+    self.launch_delay[env_ids] += self.enable_time[env_ids]
+    self.hold_after_catch[env_ids] = sample_uniform(
+      *self.cfg.hold_after_catch_range_s, (num,), self.device
+    )
+    # Occasionally stand ready without a throw, then return to rest.
+    no_throw = torch.rand(num, device=self.device) < self.cfg.no_throw_probability
+    self.disable_time[env_ids] = torch.where(
+      no_throw, self.enable_time[env_ids] + self.hold_after_catch[env_ids], torch.inf
+    )
+    self.launch_delay[env_ids] = torch.where(
+      no_throw, torch.inf, self.launch_delay[env_ids]
+    )
+    self.catch_enabled[env_ids] = False
+    self.catch_success_pulse[env_ids] = False
 
     self.launched[env_ids] = False
     self.ball_observation_occluded[env_ids] = False
@@ -689,6 +713,7 @@ class BallThrowCommand(CommandTerm):
     slow = self.ball_hand_relative_speed < self.cfg.max_hold_relative_speed_mps
     stable = (
       self.launched
+      & self.catch_enabled
       & contained
       & slow
       & palm_contact_maintained
@@ -707,8 +732,18 @@ class BallThrowCommand(CommandTerm):
       self.hold_steps[env_ids] + pose_quality[env_ids],
       0.0,
     )
-    self.caught[env_ids] |= (
+    self.catch_success_pulse[env_ids] = ~self.caught[env_ids] & (
       self.hold_steps[env_ids] >= self.required_hold_steps[env_ids]
+    )
+    self.caught[env_ids] |= self.catch_success_pulse[env_ids]
+
+  def _update_mode(self, env_ids: torch.Tensor) -> None:
+    if self.cfg.catch_enabled_override is not None:
+      self.catch_enabled[env_ids] = self.cfg.catch_enabled_override
+      return
+    elapsed = self._env.episode_length_buf[env_ids] * self._env.step_dt
+    self.catch_enabled[env_ids] = (elapsed >= self.enable_time[env_ids]) & (
+      elapsed < self.disable_time[env_ids]
     )
 
   def _update_command(self, env_ids: torch.Tensor | None) -> None:
@@ -716,11 +751,21 @@ class BallThrowCommand(CommandTerm):
       torch.arange(self.num_envs, device=self.device) if env_ids is None else env_ids
     )
     elapsed = self._env.episode_length_buf[scoped_ids] * self._env.step_dt
-    ready = (~self.launched[scoped_ids]) & (elapsed >= self.launch_delay[scoped_ids])
+    self._update_mode(scoped_ids)
+    ready = (
+      ~self.launched[scoped_ids]
+      & self.catch_enabled[scoped_ids]
+      & (elapsed >= self.launch_delay[scoped_ids])
+    )
     launch_ids = scoped_ids[ready]
     if launch_ids.numel() > 0:
       self._launch(launch_ids)
     self._update_grasp(scoped_ids)
+    self.disable_time[scoped_ids] = torch.where(
+      self.catch_success_pulse[scoped_ids],
+      elapsed + self.hold_after_catch[scoped_ids],
+      self.disable_time[scoped_ids],
+    )
     self.ball_observation_occluded[scoped_ids] |= (
       self.ball_in_catch_zone[scoped_ids] & self.ball_visible[scoped_ids]
     )
@@ -781,6 +826,11 @@ class BallThrowCommandCfg(CommandTermCfg):
   left_palm_sensor_name: str = "left_palm_ball_contact"
   right_palm_sensor_name: str = "right_palm_ball_contact"
   launch_delay_range_s: tuple[float, float] = (0.25, 0.5)
+  idle_time_range_s: tuple[float, float] = (1.0, 2.0)
+  hold_after_catch_range_s: tuple[float, float] = (1.0, 3.0)
+  release_time_s: float = 3.0
+  no_throw_probability: float = 0.1
+  catch_enabled_override: bool | None = None
   target_x_range_m: tuple[float, float] = (0.35, 0.5)
   target_z_center_m: float = 0.17
   initial_target_y_range_m: float = 0.1
@@ -907,6 +957,7 @@ class RehearsalThrowCommand(BallThrowCommand):
       torch.rand(len(env_ids), device=self.device) < self.cfg.rehearsal_fraction
     )
     reference_ids = env_ids[self.rehearsal[env_ids]]
+    self.catch_enabled[reference_ids] = True
     if reference_ids.numel() > 0:
       self.reference._resample_command(reference_ids)
       self.reference._pending_forward = False

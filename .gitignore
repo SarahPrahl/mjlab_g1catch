@@ -11,3 +11,5 @@ wandb/
 *.onnx
 *.onnx.data
 *.pt
+!/pretrained/phase1_tracking.pt
+!/pretrained/phase2_catch_release.pt

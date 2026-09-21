@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from mjlab.rl import MjlabOnPolicyRunner
+from rsl_rl.modules import EmpiricalNormalization
 
 
 class ThrowOnPolicyRunner(MjlabOnPolicyRunner):
@@ -38,6 +39,12 @@ class ThrowOnPolicyRunner(MjlabOnPolicyRunner):
         strict=True,
         map_location=device,
       )
+      # The final input is always 1 in phase 1. Give it unit variance before
+      # introducing 0, avoiding a 100x normalized jump while preserving armed output.
+      normalizer = self.alg.get_policy().obs_normalizer
+      if isinstance(normalizer, EmpiricalNormalization):
+        normalizer.get_buffer("_var")[..., -1] = 1.0
+        normalizer.get_buffer("_std")[..., -1] = 1.0
       self.current_learning_iteration = 0
       self.env.unwrapped.common_step_counter = 0
       print(f"[INFO] Warm-started stage-two actor from: {checkpoint}")

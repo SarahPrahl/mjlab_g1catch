@@ -4,6 +4,9 @@ This package adds a ball-catching task to
 [mjlab](https://mujocolab.github.io/mjlab/main/index.html). It uses the Unitree
 G1 model with Inspire hands.
 
+**Want to try a trained model or start from pretrained weights?** See
+[pretrained/README.md](pretrained/README.md) for the two selected models and commands.
+
 The project has two training stages:
 
 1. Stage 1 tracks retargeted catch recordings.
@@ -76,6 +79,22 @@ approach shaping remains outside the box. Distal finger contacts earn a bonus
 only during a stable in-box grasp with both real palm faces touching; full bonus
 requires two distal finger links per hand. Finger opening fades out over 0.15 s
 after the first stable grasp. These rules do not change reference rehearsal.
+
+The `catch_enabled` input selects catching/holding (1) or rest/release (0).
+Phase 1 and reference rehearsal always use 1. Synthetic episodes start with
+1–2 seconds at rest, enable catching, then throw after another 0.25–0.5 seconds.
+After a successful catch they keep holding for another random 1–3 seconds,
+disable catching, and allow 3 seconds to release and return to the default arm
+pose. Ten percent of synthetic episodes enable and disable without a throw.
+Episodes last at most 14 seconds; falling still terminates in either mode.
+Success is rewarded once, not every holding step. Release rewards require a
+previous catch and a ball below the hands with no hand contacts.
+
+The automatic schedule is only for training/playback. Set the throw command's
+`cfg.catch_enabled_override` to `True`/`False` for manual control, or `None` to
+use the schedule. On hardware the controller supplies this observation directly;
+it is not a safety stop. Old 136-input checkpoints are incompatible: train both
+phases with the new 137-input actor.
 
 ```bash
 uv run g1-catch-train Mjlab-Catch-Throws-Unitree-G1-Inspire \
@@ -161,7 +180,7 @@ TensorBoard.
 
 ## Policy interface
 
-Both actors use the same 136-value observation:
+Both actors use the same 137-value observation:
 
 | Observation                         | Values |
 | ----------------------------------- | -----: |
@@ -173,6 +192,7 @@ Both actors use the same 136-value observation:
 | Ball position relative to the torso |      3 |
 | Ball velocity relative to the torso |      3 |
 | Ball visibility                     |      1 |
+| Catch enabled (operator command)    |      1 |
 
 The actor is an MLP with layers of 512, 256, and 128 units. It uses ELU
 activations. It outputs 41 normalized joint-position actions for the G1 body and

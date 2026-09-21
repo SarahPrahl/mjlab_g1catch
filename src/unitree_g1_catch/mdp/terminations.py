@@ -29,10 +29,26 @@ def rehearsal_termination(
   return value & command.rehearsal
 
 
-def catch_succeeded(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-  """End an episode after the ball has been held stably for the required time."""
+def release_finished(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Allow a fixed release/rest window after disarming, also if release fails."""
   command = _command(env, command_name)
-  return command.caught & command.synthetic_weight.bool()
+  elapsed = env.episode_length_buf * env.step_dt
+  return (
+    (elapsed >= command.disable_time + command.cfg.release_time_s)
+    & command.synthetic_weight.bool()
+    & (command.cfg.catch_enabled_override is None)
+  )
+
+
+def rehearsal_time_out(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  duration_s: float,
+) -> torch.Tensor:
+  """Keep reference episode duration independent of the new release window."""
+  command = _command(env, command_name)
+  assert isinstance(command, RehearsalThrowCommand)
+  return command.rehearsal & (env.episode_length_buf * env.step_dt >= duration_s)
 
 
 def throw_missed(
@@ -50,7 +66,7 @@ def throw_missed(
   )
   return (
     command.launched
+    & command.catch_enabled
     & command.synthetic_weight.bool()
-    & ~command.caught
     & ((relative_height < minimum_ball_height_m) | too_far_after_arrival)
   )

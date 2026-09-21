@@ -274,7 +274,49 @@ def controlled_arm_posture_exp(
     * command.pre_catch_pose_weight
   )
   holding = quiet_extended * command.stable_grasp.float()
-  return torch.maximum(ready, holding) * command.synthetic_weight
+  return (
+    torch.maximum(ready, holding)
+    * command.synthetic_weight
+    * command.catch_enabled.float()
+  )
+
+
+def idle_posture_exp(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  asset_cfg: SceneEntityCfg,
+  posture_std: float,
+  velocity_std: float,
+) -> torch.Tensor:
+  """Return arms to the default side pose without moving quickly."""
+  command = _throw_command(env, command_name)
+  robot: Entity = env.scene[asset_cfg.name]
+  error = (
+    robot.data.joint_pos[:, asset_cfg.joint_ids]
+    - robot.data.default_joint_pos[:, asset_cfg.joint_ids]
+  )
+  velocity = robot.data.joint_vel[:, asset_cfg.joint_ids]
+  return (
+    torch.exp(
+      -error.square().mean(-1) / posture_std**2
+      - velocity.square().mean(-1) / velocity_std**2
+    )
+    * (~command.catch_enabled).float()
+    * command.synthetic_weight
+  )
+
+
+def ball_released_reward(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """After a catch, reward a dropped ball, not just open fingers supporting it."""
+  command = _throw_command(env, command_name)
+  left: ContactSensor = env.scene["left_ball_contact"]
+  right: ContactSensor = env.scene["right_ball_contact"]
+  assert left.data.found is not None and right.data.found is not None
+  no_contact = ~left.data.found.any(-1) & ~right.data.found.any(-1)
+  below = command.ball_pos_w[:, 2] < command.palm_midpoint_w[:, 2] - 0.15
+  return (
+    no_contact & below & command.caught & ~command.catch_enabled
+  ).float() * command.synthetic_weight
 
 
 def arm_motion_l2(
@@ -314,7 +356,11 @@ def interception_exp(
   )
   proximity = torch.exp(-torch.square(command.ball_palm_distance) / distance_std**2)
   return (
-    proximity * speed_score * command.ball_visible.float() * command.synthetic_weight
+    proximity
+    * speed_score
+    * command.ball_visible.float()
+    * command.synthetic_weight
+    * command.catch_enabled.float()
   )
 
 
@@ -333,9 +379,9 @@ def stable_grasp_reward(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
 
 
 def catch_success_reward(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-  """One terminal success pulse whose configured weight is independent of dt."""
+  """One success pulse per episode, even though holding/release continue."""
   command = _throw_command(env, command_name)
-  return command.caught.float() * command.synthetic_weight / env.step_dt
+  return command.catch_success_pulse.float() * command.synthetic_weight / env.step_dt
 
 
 def body_ball_contact_penalty(

@@ -75,6 +75,14 @@ def robot_anchor_height(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
   return height.unsqueeze(-1)
 
 
+def catch_enabled(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Operator command, not an inferred ball state; reference clips stay armed."""
+  command = _command(env, command_name)
+  if isinstance(command, BallThrowCommand):
+    return command.catch_enabled.float().unsqueeze(-1)
+  return torch.ones((env.num_envs, 1), device=env.device)
+
+
 def reference_ball_state_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   """Privileged reference ball state relative to the reference anchor."""
   command = _command(env, command_name)

@@ -254,6 +254,10 @@ def _actor_observation_terms(
         "occlude_in_catch_zone": occlude_in_catch_zone,
       },
     ),
+    "catch_enabled": ObservationTermCfg(
+      func=catch_mdp.catch_enabled,
+      params={"command_name": command_name},
+    ),
   }
 
 
@@ -416,8 +420,7 @@ def unitree_g1_inspire_throw_env_cfg(
   )
   rehearsal_rewards = {name: cfg.rewards[name] for name in rehearsal_reward_names}
   rehearsal_terminations = {
-    name: cfg.terminations[name]
-    for name in ("anchor_pos", "anchor_ori", "ee_body_pos")
+    name: cfg.terminations[name] for name in ("anchor_pos", "anchor_ori", "ee_body_pos")
   }
 
   palm_sensors = tuple(
@@ -550,6 +553,21 @@ def unitree_g1_inspire_throw_env_cfg(
     "maximum_ball_distance_m": 3.5,
   }
   cfg.rewards = {
+    "idle_posture": RewardTermCfg(
+      func=catch_mdp.idle_posture_exp,
+      weight=2.0,
+      params={
+        "command_name": "throw",
+        "asset_cfg": arm_cfg,
+        "posture_std": 0.4,
+        "velocity_std": 1.0,
+      },
+    ),
+    "ball_released": RewardTermCfg(
+      func=catch_mdp.ball_released_reward,
+      weight=2.0,
+      params={"command_name": "throw"},
+    ),
     "standing_posture": RewardTermCfg(
       func=catch_mdp.standing_posture_exp,
       weight=3.5,
@@ -678,7 +696,9 @@ def unitree_g1_inspire_throw_env_cfg(
   }
   if not play:
     for name, term in rehearsal_rewards.items():
-      params = {key: value for key, value in term.params.items() if key != "command_name"}
+      params = {
+        key: value for key, value in term.params.items() if key != "command_name"
+      }
       cfg.rewards[f"rehearsal_{name}"] = RewardTermCfg(
         func=catch_mdp.rehearsal_reward,
         weight=term.weight,
@@ -699,15 +719,22 @@ def unitree_g1_inspire_throw_env_cfg(
       func=tracking_mdp.root_height_below_minimum,
       params={"minimum_height": 0.45, "asset_cfg": SceneEntityCfg("robot")},
     ),
-    "caught": TerminationTermCfg(
-      func=catch_mdp.catch_succeeded,
+    "release_finished": TerminationTermCfg(
+      func=catch_mdp.release_finished,
       params={"command_name": "throw"},
     ),
     "missed": TerminationTermCfg(func=catch_mdp.throw_missed, params=miss_params),
   }
   if not play:
+    cfg.terminations["rehearsal_time_out"] = TerminationTermCfg(
+      func=catch_mdp.rehearsal_time_out,
+      time_out=True,
+      params={"command_name": "throw", "duration_s": 6.0},
+    )
     for name, term in rehearsal_terminations.items():
-      params = {key: value for key, value in term.params.items() if key != "command_name"}
+      params = {
+        key: value for key, value in term.params.items() if key != "command_name"
+      }
       cfg.terminations[f"rehearsal_{name}"] = TerminationTermCfg(
         func=catch_mdp.rehearsal_termination,
         params={
@@ -730,6 +757,6 @@ def unitree_g1_inspire_throw_env_cfg(
       "yaw": (-0.2, 0.2),
     }
 
-  cfg.episode_length_s = 6.0
+  cfg.episode_length_s = 14.0
   cfg.is_finite_horizon = True
   return cfg
