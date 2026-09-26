@@ -91,9 +91,7 @@ def train_pipeline_main() -> None:
   checkpoints = list(phase_1_runs[0].glob("model_*.pt"))
   if not checkpoints:
     raise RuntimeError(f"No phase-1 checkpoint found in {phase_1_runs[0]}")
-  checkpoint = max(
-    checkpoints, key=lambda path: int(path.stem.removeprefix("model_"))
-  )
+  checkpoint = max(checkpoints, key=lambda path: int(path.stem.removeprefix("model_")))
   print(f"[INFO] Starting phase 2 from: {checkpoint}")
 
   subprocess.run(
