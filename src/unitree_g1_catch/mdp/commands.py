@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 from mjlab.managers import CommandTerm, CommandTermCfg
+from unitree_g1_catch.assets import Humanoid
 from mjlab.tasks.tracking.mdp.commands import (
   MotionCommand,
   MotionCommandCfg,
@@ -35,10 +36,29 @@ class CatchMotionLoader(MotionLoader):
   """Load standard mjlab motion arrays plus ball and clip-boundary metadata."""
 
   def __init__(
-    self, motion_file: str, body_indexes: torch.Tensor, device: str = "cpu"
+    self,
+    motion_file: str,
+    body_indexes: torch.Tensor,
+    humanoid: Humanoid,
+    device: str = "cpu",
   ) -> None:
     super().__init__(motion_file, body_indexes, device=device)
     with np.load(motion_file, allow_pickle=False) as data:
+      joint_names = tuple(str(name) for name in data["joint_names"].tolist())
+      # Only keep the joints that are actually present in the humanoid asset
+      keep = tuple(
+        idx for idx, name in enumerate(joint_names) if name in humanoid.joint_names
+      )
+      if keep:
+        joint_pos = torch.tensor(data["joint_pos"][:, keep], dtype=torch.float32, device=device)
+        joint_vel = torch.tensor(data["joint_vel"][:, keep], dtype=torch.float32, device=device)
+      else:
+        joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
+        joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
+
+      self.joint_pos = joint_pos
+      self.joint_vel = joint_vel
+
       missing = [
         key
         for key in ("ball_pos_w", "ball_lin_vel_w", "ball_visible")
@@ -108,7 +128,10 @@ class CatchMotionCommand(MotionCommand):
     # MotionCommand deliberately knows only mjlab's standard motion schema. Replace
     # its loader with our compatible extension instead of patching mjlab internals.
     self.motion = CatchMotionLoader(
-      cfg.motion_file, self.body_indexes, device=self.device
+      cfg.motion_file,
+      self.body_indexes,
+      device=self.device,
+      humanoid=cfg.humanoid,
     )
     self.ball: Entity = env.scene[cfg.ball_entity_name]
     self._ball_visible_state = torch.zeros(
@@ -287,6 +310,7 @@ class CatchMotionCommand(MotionCommand):
 @dataclass(kw_only=True)
 class CatchMotionCommandCfg(MotionCommandCfg):
   ball_entity_name: str = "ball"
+  humanoid: Humanoid
   # Slightly larger than the 7.5 cm physical ball radius so the marker remains
   # visible as a shell when the physical and reference balls coincide.
   reference_ball_viz_radius_m: float = 0.0825
@@ -316,11 +340,14 @@ class BallThrowCommand(CommandTerm):
       dtype=torch.long,
       device=self.device,
     )
-    self.palm_site_indexes = torch.tensor(
-      self.robot.find_sites(cfg.palm_site_names, preserve_order=True)[0],
-      dtype=torch.long,
-      device=self.device,
-    )
+    if cfg.palm_site_names:
+      self.palm_site_indexes = torch.tensor(
+        self.robot.find_sites(cfg.palm_site_names, preserve_order=True)[0],
+        dtype=torch.long,
+        device=self.device,
+      )
+    else:
+      self.palm_site_indexes = torch.empty((0,), dtype=torch.long, device=self.device)
 
     shape = (self.num_envs,)
     self.launch_delay = torch.zeros(shape, device=self.device)
@@ -417,7 +444,9 @@ class BallThrowCommand(CommandTerm):
 
   @property
   def palm_midpoint_w(self) -> torch.Tensor:
-    return self.robot.data.site_pos_w[:, self.palm_site_indexes].mean(dim=1)
+    if self.palm_site_indexes.numel() > 0:
+      return self.robot.data.site_pos_w[:, self.palm_site_indexes].mean(dim=1)
+    return self.robot.data.body_link_pos_w[:, self.hand_body_indexes].mean(dim=1)
 
   @property
   def ball_palm_distance(self) -> torch.Tensor:
@@ -853,9 +882,9 @@ class BallThrowCommand(CommandTerm):
 class BallThrowCommandCfg(CommandTermCfg):
   entity_name: str = "robot"
   ball_entity_name: str = "ball"
-  anchor_body_name: str = "torso_link"
-  hand_body_names: tuple[str, str] = ("l_ih_hand_base", "r_ih_hand_base")
-  palm_site_names: tuple[str, str] = ("left_palm_site", "right_palm_site")
+  anchor_body_name: str
+  hand_body_names: tuple[str, ...]
+  palm_site_names: tuple[str, ...]
   left_palm_sensor_name: str = "left_palm_ball_contact"
   right_palm_sensor_name: str = "right_palm_ball_contact"
   launch_delay_range_s: tuple[float, float] = (0.25, 0.5)

@@ -78,7 +78,12 @@ def palm_ball_proximity_exp(
   """Bring both palm centers toward the physical ball."""
   command = _command(env, command_name)
   robot: Entity = env.scene[asset_cfg.name]
-  palm_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids]
+  if asset_cfg.site_names is not None:
+    palm_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids]
+  elif asset_cfg.geom_names is not None:
+    palm_pos_w = robot.data.geom_pos_w[:, asset_cfg.geom_ids]
+  else:
+    raise ValueError("palm_ball_proximity_exp requires either site_names or geom_names")
   error = torch.sum(torch.square(palm_pos_w - command.ball_pos_w[:, None, :]), dim=-1)
   return torch.exp(-error.mean(dim=-1) / std**2) * command.ball_visible.float()
 
@@ -150,11 +155,13 @@ class finger_posture_exp:
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     robot: Entity = env.scene[cfg.params["asset_cfg"].name]
-    _, joint_names = robot.find_joints(cfg.params["asset_cfg"].joint_names)
+    grip_target_patterns = tuple(cfg.params["grip_targets"].keys())
+    joint_ids, joint_names = robot.find_joints(grip_target_patterns, preserve_order=True)
     _, _, targets = resolve_matching_names_values(
       data=cfg.params["grip_targets"],
       list_of_strings=joint_names,
     )
+    self.joint_ids = torch.tensor(joint_ids, device=env.device, dtype=torch.long)
     self.grip_targets = torch.tensor(targets, device=env.device, dtype=torch.float32)
 
   def __call__(
@@ -171,10 +178,10 @@ class finger_posture_exp:
     del grip_targets
     command = _throw_command(env, command_name)
     robot: Entity = env.scene[asset_cfg.name]
-    joint_pos = robot.data.joint_pos[:, asset_cfg.joint_ids]
-    joint_vel = robot.data.joint_vel[:, asset_cfg.joint_ids]
+    joint_pos = robot.data.joint_pos[:, self.joint_ids]
+    joint_vel = robot.data.joint_vel[:, self.joint_ids]
     open_error = torch.mean(
-      torch.square(joint_pos - robot.data.default_joint_pos[:, asset_cfg.joint_ids]),
+      torch.square(joint_pos - robot.data.default_joint_pos[:, self.joint_ids]),
       dim=-1,
     )
     grip_error = torch.mean(torch.square(joint_pos - self.grip_targets), dim=-1)

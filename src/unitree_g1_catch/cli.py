@@ -6,7 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from unitree_g1_catch import register_tasks
+from unitree_g1_catch import (
+  TASK_ID,
+  TASK_ID_STANDARD,
+  THROW_TASK_ID,
+  THROW_TASK_ID_STANDARD,
+  register_tasks,
+)
 
 CACHE_ROOT = Path(__file__).resolve().parents[2] / ".cache"
 
@@ -43,6 +49,7 @@ def train_pipeline_main() -> None:
   parser.add_argument("--num-envs", type=int, default=2_048)
   parser.add_argument("--log-root", type=Path, default=Path("logs/rsl_rl"))
   parser.add_argument("--run-name", default="pipeline")
+  parser.add_argument("--inspire", action="store_true", help="Use Inspire hand in the environment")
   args = parser.parse_args()
 
   motion_file = args.motion_file.expanduser().resolve()
@@ -58,13 +65,16 @@ def train_pipeline_main() -> None:
     parser.error(f"training executable does not exist: {train_executable}")
 
   log_root = args.log_root.expanduser().resolve()
+  flat_task_id = TASK_ID if args.inspire else TASK_ID_STANDARD
+  throw_task_id = THROW_TASK_ID if args.inspire else THROW_TASK_ID_STANDARD
+
   phase_1_root = log_root / "g1_inspire_catch"
   previous_runs = set(phase_1_root.iterdir()) if phase_1_root.exists() else set()
   phase_1_name = f"{args.run_name}-phase1"
   subprocess.run(
     [
       train_executable,
-      "Mjlab-Catch-Flat-Unitree-G1-Inspire",
+      flat_task_id,
       "--env.commands.motion.motion-file",
       motion_file,
       "--env.scene.num-envs",
@@ -97,7 +107,7 @@ def train_pipeline_main() -> None:
   subprocess.run(
     [
       train_executable,
-      "Mjlab-Catch-Throws-Unitree-G1-Inspire",
+      throw_task_id,
       "--agent.pretrained-actor-checkpoint",
       checkpoint,
       "--env.commands.throw.motion-cfg.motion-file",

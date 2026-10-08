@@ -31,8 +31,9 @@ from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 from unitree_g1_catch import mdp as catch_mdp
 from unitree_g1_catch.assets import (
-  G1_INSPIRE_ACTION_SCALE,
-  get_g1_inspire_robot_cfg,
+  Humanoid,
+  UnitreeG1,
+  UnitreeG1Inspire,
 )
 from unitree_g1_catch.mdp import (
   BallThrowCommandCfg,
@@ -45,38 +46,6 @@ BALL_RADIUS_M = BALL_DIAMETER_M / 2.0
 BALL_MASS_KG = 0.112
 BALL_CONTACT_SOLREF = (0.02, 1.2)
 BALL_CONTACT_SOLIMP = (0.3, 0.9, 0.01, 0.5, 2.0)
-
-ACTUATED_JOINTS = (
-  ".*_joint",
-  "[lr]_ih_thumb_proximal_(yaw|pitch)",
-  "[lr]_ih_(index|middle|ring|pinky)_proximal",
-)
-
-ARM_JOINTS = (
-  ".*_shoulder_.*_joint",
-  ".*_elbow_joint",
-  ".*_wrist_.*_joint",
-)
-
-ARM_READY_JOINTS = (
-  ".*_shoulder_.*_joint",
-  ".*_wrist_.*_joint",
-)
-
-ELBOW_JOINTS = (".*_elbow_joint",)
-
-FINGER_JOINTS = (
-  "[lr]_ih_thumb_proximal_(yaw|pitch)",
-  "[lr]_ih_(index|middle|ring|pinky)_proximal",
-)
-
-LOWER_BODY_JOINTS = (
-  "waist_.*_joint",
-  ".*_hip_.*_joint",
-  ".*_knee_joint",
-  ".*_ankle_.*_joint",
-)
-
 
 @dataclass(kw_only=True)
 class _BoxUnevenTerrainCfg(SubTerrainCfg):
@@ -162,7 +131,10 @@ def get_ball_spec() -> mujoco.MjSpec:
   return spec
 
 
-def _catch_motion_cfg(source: MotionCommandCfg) -> CatchMotionCommandCfg:
+def _catch_motion_cfg(
+  source: MotionCommandCfg, humanoid: Humanoid
+) -> CatchMotionCommandCfg:
+  """Create a motion command generator configuration for the catching task for the selected humanoid."""
   return CatchMotionCommandCfg(
     entity_name=source.entity_name,
     ball_entity_name="ball",
@@ -172,65 +144,53 @@ def _catch_motion_cfg(source: MotionCommandCfg) -> CatchMotionCommandCfg:
     velocity_range=source.velocity_range,
     joint_position_range=source.joint_position_range,
     motion_file=source.motion_file,
-    anchor_body_name="torso_link",
-    body_names=(
-      "pelvis",
-      "left_hip_roll_link",
-      "left_knee_link",
-      "left_ankle_roll_link",
-      "right_hip_roll_link",
-      "right_knee_link",
-      "right_ankle_roll_link",
-      "torso_link",
-      "left_shoulder_roll_link",
-      "left_elbow_link",
-      "left_wrist_yaw_link",
-      "l_ih_hand_base",
-      "l_ih_thumb_distal",
-      "l_ih_index_intermediate",
-      "l_ih_middle_intermediate",
-      "right_shoulder_roll_link",
-      "right_elbow_link",
-      "right_wrist_yaw_link",
-      "r_ih_hand_base",
-      "r_ih_thumb_distal",
-      "r_ih_index_intermediate",
-      "r_ih_middle_intermediate",
-    ),
+    anchor_body_name=humanoid.anchor_body,
+    body_names=humanoid.motion_tracking_bodies,
     adaptive_kernel_size=source.adaptive_kernel_size,
     adaptive_lambda=source.adaptive_lambda,
     adaptive_uniform_ratio=source.adaptive_uniform_ratio,
     adaptive_alpha=source.adaptive_alpha,
     sampling_mode=source.sampling_mode,
+    humanoid=humanoid,
     viz=source.viz,
   )
 
 
 def _actor_observation_terms(
-  command_name: str, occlude_in_catch_zone: bool = False
+  command_name: str,
+  humanoid: Humanoid,
+  occlude_in_catch_zone: bool = False,
 ) -> dict[str, ObservationTermCfg]:
   """Return the deployment observation interface shared by both training stages."""
-  actor_joint_cfg = SceneEntityCfg("robot", joint_names=ACTUATED_JOINTS)
+  actor_joint_cfg = SceneEntityCfg(
+    "robot", joint_names=humanoid.actuated_joints
+  )
   return {
+    # Root link angular velocity in body frame
     "base_ang_vel": ObservationTermCfg(
       func=tracking_mdp.base_ang_vel,
       noise=Unoise(n_min=-0.1, n_max=0.1),
     ),
+    # Gravity vector projected into body frame
     "projected_gravity": ObservationTermCfg(
       func=tracking_mdp.projected_gravity,
       noise=Unoise(n_min=-0.03, n_max=0.03),
     ),
+    # Joint positions of all actuated joints, relative to the initial pose of the robot, with small noise to improve robustness.
     "joint_pos": ObservationTermCfg(
       func=tracking_mdp.joint_pos_rel,
       params={"asset_cfg": actor_joint_cfg, "biased": True},
       noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
+    # Joint velocities of all actuated joints, relative to the initial pose of the robot, with small noise to improve robustness.
     "joint_vel": ObservationTermCfg(
       func=tracking_mdp.joint_vel_rel,
       params={"asset_cfg": actor_joint_cfg},
       noise=Unoise(n_min=-0.25, n_max=0.25),
     ),
+    # Action taken in the previous step
     "last_action": ObservationTermCfg(func=tracking_mdp.last_action),
+    # Ball position relative to the robot anchor, in the anchor frame.
     "ball_position": ObservationTermCfg(
       func=catch_mdp.ball_position_b,
       params={
@@ -239,6 +199,7 @@ def _actor_observation_terms(
       },
       noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
+    # Ball velocity relative to the robot anchor, in the anchor frame.
     "ball_velocity": ObservationTermCfg(
       func=catch_mdp.ball_velocity_b,
       params={
@@ -247,6 +208,7 @@ def _actor_observation_terms(
       },
       noise=Unoise(n_min=-0.1, n_max=0.1),
     ),
+    # Wheather the ball can currently be tracked
     "ball_visible": ObservationTermCfg(
       func=catch_mdp.ball_visible,
       params={
@@ -254,6 +216,7 @@ def _actor_observation_terms(
         "occlude_in_catch_zone": occlude_in_catch_zone,
       },
     ),
+    # Whether the robot is currently in a catching state
     "catch_enabled": ObservationTermCfg(
       func=catch_mdp.catch_enabled,
       params={"command_name": command_name},
@@ -261,10 +224,11 @@ def _actor_observation_terms(
   }
 
 
-def unitree_g1_inspire_catch_env_cfg(
+def unitree_g1_catch_env_cfg(
   play: bool = False,
+  inspire: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create the reactive G1 + Inspire ball-catching task."""
+  """Create the reactive G1 ball-catching task, optionally with Inspire hands."""
   cfg = make_tracking_env_cfg()
   if not play:
     cfg.scene.terrain = _training_terrain_cfg()
@@ -272,8 +236,10 @@ def unitree_g1_inspire_catch_env_cfg(
       func=catch_mdp.terrain_mix,
       params={"flat_steps": 60_000, "curriculum_steps": 240_000},
     )
+  humanoid = UnitreeG1Inspire() if inspire else UnitreeG1()
+  robot = humanoid.get_cfg()
   cfg.scene.entities = {
-    "robot": get_g1_inspire_robot_cfg(),
+    "robot": robot,
     "ball": EntityCfg(spec_fn=get_ball_spec),
   }
 
@@ -283,9 +249,9 @@ def unitree_g1_inspire_catch_env_cfg(
       mode="body",
       pattern=".*",
       entity="robot",
-      exclude=("[lr]_ih_.*",),
+      exclude=humanoid.finger_bodies,
     ),
-    secondary=ContactMatch(mode="subtree", pattern="pelvis", entity="robot"),
+    secondary=ContactMatch(mode="subtree", pattern=humanoid.root_body, entity="robot"),
     fields=("found", "force"),
     reduce="none",
     num_slots=1,
@@ -295,7 +261,9 @@ def unitree_g1_inspire_catch_env_cfg(
     ContactSensorCfg(
       name=f"{side}_ball_contact",
       primary=ContactMatch(
-        mode="subtree", pattern=f"{prefix}_ih_hand_base", entity="robot"
+        mode="geom",
+        pattern=patterns[0],
+        entity="robot",
       ),
       secondary=ContactMatch(mode="body", pattern="ball", entity="ball"),
       fields=("found", "force"),
@@ -303,24 +271,26 @@ def unitree_g1_inspire_catch_env_cfg(
       num_slots=1,
       history_length=4,
     )
-    for side, prefix in (("left", "l"), ("right", "r"))
+    for side, patterns in zip(
+      ("left", "right"), humanoid.palm_collisions_by_hand, strict=True
+    )
   )
   cfg.scene.sensors = (self_collision, *hand_ball_sensors)
 
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
-  joint_pos_action.scale = G1_INSPIRE_ACTION_SCALE
+  joint_pos_action.scale = humanoid.action_scale
   cfg.rewards["joint_limit"].params["asset_cfg"] = SceneEntityCfg(
-    "robot", joint_names=(".*_joint",)
+    "robot", joint_names=humanoid.actuated_joints
   )
 
   source_motion = cfg.commands["motion"]
   assert isinstance(source_motion, MotionCommandCfg)
-  motion_cmd = _catch_motion_cfg(source_motion)
+  motion_cmd = _catch_motion_cfg(source_motion, humanoid)
   cfg.commands["motion"] = motion_cmd
 
   cfg.observations["actor"] = ObservationGroupCfg(
-    terms=_actor_observation_terms("motion"),
+    terms=_actor_observation_terms("motion", humanoid),
     concatenate_terms=True,
     enable_corruption=True,
   )
@@ -350,15 +320,18 @@ def unitree_g1_inspire_catch_env_cfg(
     weight=0.25,
     params={"command_name": "motion", "std": 1.5},
   )
+  palm_cfg = (
+    SceneEntityCfg("robot", site_names=humanoid.palm_sites)
+    if humanoid.palm_sites
+    else SceneEntityCfg("robot", geom_names=humanoid.palm_collisions)
+  )
   cfg.rewards["palm_ball_proximity"] = RewardTermCfg(
     func=catch_mdp.palm_ball_proximity_exp,
     weight=1.0,
     params={
       "command_name": "motion",
       "std": 0.3,
-      "asset_cfg": SceneEntityCfg(
-        "robot", site_names=("left_palm_site", "right_palm_site")
-      ),
+      "asset_cfg": palm_cfg,
     },
   )
   cfg.rewards["ball_contact"] = RewardTermCfg(
@@ -371,18 +344,11 @@ def unitree_g1_inspire_catch_env_cfg(
     },
   )
 
-  cfg.events["foot_friction"].params[
-    "asset_cfg"
-  ].geom_names = r"^(left|right)_ankle_roll_link_collision_.*$"
-  cfg.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
-  cfg.terminations["ee_body_pos"].params["body_names"] = (
-    "left_ankle_roll_link",
-    "right_ankle_roll_link",
-    "left_wrist_yaw_link",
-    "right_wrist_yaw_link",
-  )
+  cfg.events["foot_friction"].params["asset_cfg"].geom_names = humanoid.foot_collisions
+  cfg.events["base_com"].params["asset_cfg"].body_names = (humanoid.anchor_body,)
+  cfg.terminations["ee_body_pos"].params["body_names"] = humanoid.ee_bodies
 
-  cfg.viewer.body_name = "torso_link"
+  cfg.viewer.body_name = humanoid.anchor_body
   cfg.viewer.distance = 3.2
   cfg.sim.nconmax = 256
   cfg.sim.njmax = 2048
@@ -399,11 +365,13 @@ def unitree_g1_inspire_catch_env_cfg(
   return cfg
 
 
-def unitree_g1_inspire_throw_env_cfg(
+def unitree_g1_throw_env_cfg(
   play: bool = False,
+  inspire: bool = False,
 ) -> ManagerBasedRlEnvCfg:
   """Create stage-two catching with procedurally launched physical balls."""
-  cfg = unitree_g1_inspire_catch_env_cfg(play=play)
+  cfg = unitree_g1_catch_env_cfg(play=play, inspire=inspire)
+  humanoid = UnitreeG1Inspire() if inspire else UnitreeG1()
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, CatchMotionCommandCfg)
   rehearsal_reward_names = (
@@ -428,7 +396,7 @@ def unitree_g1_inspire_throw_env_cfg(
       name=f"{side}_palm_ball_contact",
       primary=ContactMatch(
         mode="geom",
-        pattern=rf"{prefix}_ih_hand_base_collision_[5-6]$",
+        pattern=patterns[0],
         entity="robot",
       ),
       secondary=ContactMatch(mode="body", pattern="ball", entity="ball"),
@@ -437,54 +405,69 @@ def unitree_g1_inspire_throw_env_cfg(
       num_slots=1,
       history_length=4,
     )
-    for side, prefix in (("left", "l"), ("right", "r"))
+    for side, patterns in zip(
+      ("left", "right"), humanoid.palm_collisions_by_hand, strict=True
+    )
   )
-  finger_sensors = tuple(
+  finger_sensors = ()
+  body_ball_sensor = ()
+  if humanoid.finger_joints:
+    finger_sensors = tuple(
+      ContactSensorCfg(
+        name=f"{side}_finger_ball_contact",
+        primary=ContactMatch(
+          mode="body",
+          pattern=pattern,
+          entity="robot",
+        ),
+        secondary=ContactMatch(mode="body", pattern="ball", entity="ball"),
+        fields=("found",),
+        reduce="maxforce",
+        num_slots=1,
+      )
+      for side, pattern in zip(
+        ("left", "right"), humanoid.finger_bodies_by_hand, strict=True
+      )
+    )
+  body_ball_sensor = (
     ContactSensorCfg(
-      name=f"{side}_finger_ball_contact",
+      name="body_ball_contact",
       primary=ContactMatch(
         mode="body",
-        pattern=rf"{prefix}_ih_(thumb_distal|(index|middle|ring|pinky)_intermediate)$",
+        pattern=".*",
         entity="robot",
+        exclude=humanoid.finger_bodies,
       ),
       secondary=ContactMatch(mode="body", pattern="ball", entity="ball"),
       fields=("found",),
       reduce="maxforce",
       num_slots=1,
-    )
-    for side, prefix in (("left", "l"), ("right", "r"))
-  )
-  body_ball_sensor = ContactSensorCfg(
-    name="body_ball_contact",
-    primary=ContactMatch(
-      mode="body",
-      pattern=".*",
-      entity="robot",
-      exclude=("[lr]_ih_.*",),
+      history_length=4,
     ),
-    secondary=ContactMatch(mode="body", pattern="ball", entity="ball"),
-    fields=("found",),
-    reduce="maxforce",
-    num_slots=1,
-    history_length=4,
   )
   cfg.scene.sensors = (
     *cfg.scene.sensors,
     *palm_sensors,
     *finger_sensors,
-    body_ball_sensor,
+    *body_ball_sensor,
   )
 
   throw_cmd = (
     BallThrowCommandCfg(
       resampling_time_range=(1.0e9, 1.0e9),
       debug_vis=True,
+      anchor_body_name=humanoid.anchor_body,
+      hand_body_names=humanoid.palm_bodies,
+      palm_site_names=humanoid.palm_sites,
     )
     if play
     else RehearsalThrowCommandCfg(
       resampling_time_range=(1.0e9, 1.0e9),
       debug_vis=True,
       motion_cfg=motion_cmd,
+      anchor_body_name=humanoid.anchor_body,
+      hand_body_names=humanoid.palm_bodies,
+      palm_site_names=humanoid.palm_sites,
     )
   )
   if play:
@@ -497,11 +480,15 @@ def unitree_g1_inspire_throw_env_cfg(
   cfg.commands = {"throw": throw_cmd}
 
   cfg.observations["actor"] = ObservationGroupCfg(
-    terms=_actor_observation_terms("throw", occlude_in_catch_zone=True),
+    terms=_actor_observation_terms(
+      "throw", humanoid, occlude_in_catch_zone=True
+    ),
     concatenate_terms=True,
     enable_corruption=not play,
   )
-  critic_joint_cfg = SceneEntityCfg("robot", joint_names=ACTUATED_JOINTS)
+  critic_joint_cfg = SceneEntityCfg(
+    "robot", joint_names=humanoid.actuated_joints
+  )
   cfg.observations["critic"] = ObservationGroupCfg(
     terms={
       "base_lin_vel": ObservationTermCfg(func=tracking_mdp.base_lin_vel),
@@ -541,12 +528,15 @@ def unitree_g1_inspire_throw_env_cfg(
     enable_corruption=False,
   )
 
-  body_joint_cfg = SceneEntityCfg("robot", joint_names=(".*_joint",))
-  arm_cfg = SceneEntityCfg("robot", joint_names=ARM_JOINTS)
-  arm_ready_cfg = SceneEntityCfg("robot", joint_names=ARM_READY_JOINTS)
-  elbow_cfg = SceneEntityCfg("robot", joint_names=ELBOW_JOINTS)
-  finger_cfg = SceneEntityCfg("robot", joint_names=FINGER_JOINTS)
-  lower_body_cfg = SceneEntityCfg("robot", joint_names=LOWER_BODY_JOINTS)
+  body_joint_cfg = SceneEntityCfg("robot", joint_names=humanoid.actuated_joints)
+  arm_cfg = SceneEntityCfg("robot", joint_names=humanoid.arm_joints)
+  arm_ready_cfg = SceneEntityCfg("robot", joint_names=humanoid.arm_ready_joints)
+  elbow_cfg = SceneEntityCfg("robot", joint_names=humanoid.elbow_joints)
+  finger_cfg = SceneEntityCfg(
+    "robot",
+    joint_names=humanoid.finger_joints,
+  )
+  lower_body_cfg = SceneEntityCfg("robot", joint_names=humanoid.lower_body_joints)
   miss_params = {
     "command_name": "throw",
     "minimum_ball_height_m": BALL_RADIUS_M + 0.01,
@@ -614,40 +604,10 @@ def unitree_g1_inspire_throw_env_cfg(
         "asset_cfg": arm_cfg,
       },
     ),
-    "finger_posture": RewardTermCfg(
-      func=catch_mdp.finger_posture_exp,
-      weight=1.0,
-      params={
-        "command_name": "throw",
-        "open_std": 0.15,
-        "grip_std": 0.25,
-        "velocity_limit_rad_s": 1.0,
-        "velocity_std": 0.5,
-        "grip_targets": {
-          ".*_ih_thumb_proximal_yaw": 0.3,
-          ".*_ih_thumb_proximal_pitch": 0.0,
-          ".*_ih_index_proximal": 0.4,
-          ".*_ih_middle_proximal": 0.4,
-          ".*_ih_ring_proximal": 0.4,
-          ".*_ih_pinky_proximal": 0.45,
-        },
-        "asset_cfg": finger_cfg,
-      },
-    ),
     "palm_contact": RewardTermCfg(
       func=catch_mdp.palm_contact_reward,
       weight=4.0,
       params={"command_name": "throw"},
-    ),
-    "finger_contact": RewardTermCfg(
-      func=catch_mdp.finger_contact_reward,
-      weight=4.0,
-      params={
-        "command_name": "throw",
-        "left_sensor_name": "left_finger_ball_contact",
-        "right_sensor_name": "right_finger_ball_contact",
-        "contacts_per_hand": 2,
-      },
     ),
     "interception": RewardTermCfg(
       func=catch_mdp.interception_exp,
@@ -681,7 +641,7 @@ def unitree_g1_inspire_throw_env_cfg(
     "joint_torques_l2": RewardTermCfg(
       func=tracking_mdp.joint_torques_l2,
       weight=-1.0e-5,
-      params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=humanoid.actuated_joints)},
     ),
     "joint_limit": RewardTermCfg(
       func=tracking_mdp.joint_pos_limits,
@@ -694,6 +654,34 @@ def unitree_g1_inspire_throw_env_cfg(
       params={"sensor_name": "self_collision", "force_threshold": 10.0},
     ),
   }
+  if humanoid.finger_joints:
+    cfg.rewards.update(
+      {
+        "finger_posture": RewardTermCfg(
+          func=catch_mdp.finger_posture_exp,
+          weight=1.0,
+          params={
+            "command_name": "throw",
+            "open_std": 0.15,
+            "grip_std": 0.25,
+            "velocity_limit_rad_s": 1.0,
+            "velocity_std": 0.5,
+            "grip_targets": humanoid.finger_grip_targets,
+            "asset_cfg": finger_cfg,
+          },
+        ),
+        "finger_contact": RewardTermCfg(
+          func=catch_mdp.finger_contact_reward,
+          weight=4.0,
+          params={
+            "command_name": "throw",
+            "left_sensor_name": "left_finger_ball_contact",
+            "right_sensor_name": "right_finger_ball_contact",
+            "contacts_per_hand": 2,
+          },
+        ),
+      }
+    )
   if not play:
     for name, term in rehearsal_rewards.items():
       params = {

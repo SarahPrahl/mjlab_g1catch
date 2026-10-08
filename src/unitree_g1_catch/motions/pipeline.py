@@ -492,7 +492,7 @@ def convert_catch_motions(
   from mjlab.scene import Scene
   from mjlab.sim.sim import Simulation, SimulationCfg
 
-  from unitree_g1_catch.tasks.env_cfg import unitree_g1_inspire_catch_env_cfg
+  from unitree_g1_catch.tasks.env_cfg import unitree_g1_catch_env_cfg
 
   paths, source_root = _discover_motions(input_path, pattern)
   if limit is not None:
@@ -502,7 +502,7 @@ def convert_catch_motions(
   sim_cfg.mujoco.timestep = 1.0 / output_fps
   # Motion conversion must stay on the deterministic flat playback scene. Training
   # may add terrain randomization independently of the source motion geometry.
-  scene = Scene(unitree_g1_inspire_catch_env_cfg(play=True).scene, device=device)
+  scene = Scene(unitree_g1_catch_env_cfg(play=True).scene, device=device)
   model = scene.compile()
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)

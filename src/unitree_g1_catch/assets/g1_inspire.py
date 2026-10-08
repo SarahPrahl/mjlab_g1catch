@@ -136,3 +136,13 @@ def get_g1_inspire_robot_cfg() -> EntityCfg:
 G1_INSPIRE_ACTION_SCALE = dict(G1_ACTION_SCALE)
 for expr in FINGER_ACTUATOR_EXPR:
   G1_INSPIRE_ACTION_SCALE[expr] = 0.5
+
+if __name__ == "__main__":
+  # View the G1 Inspire MJCF in a standalone viewer for debugging.
+  import mujoco.viewer as viewer
+
+  from mjlab.entity.entity import Entity
+
+  robot = Entity(get_g1_inspire_robot_cfg())
+
+  viewer.launch(robot.spec.compile())
