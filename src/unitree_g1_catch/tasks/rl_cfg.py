@@ -8,6 +8,8 @@ from mjlab.rl import (
   RslRlPpoAlgorithmCfg,
 )
 
+from unitree_g1_catch import experiment_name
+
 
 @dataclass
 class ThrowOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
@@ -16,7 +18,7 @@ class ThrowOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   pretrained_actor_checkpoint: str | None = None
 
 
-def unitree_g1_inspire_catch_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+def unitree_g1_catch_ppo_runner_cfg(inspire: bool = True, obs_ver: int = 0, reward_ver: int = 0) -> RslRlOnPolicyRunnerCfg:
   return RslRlOnPolicyRunnerCfg(
     actor=RslRlModelCfg(
       hidden_dims=(512, 256, 128),
@@ -47,14 +49,13 @@ def unitree_g1_inspire_catch_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       desired_kl=0.01,
       max_grad_norm=1.0,
     ),
-    experiment_name="g1_inspire_catch",
+    experiment_name=experiment_name(throw=False, inspire=inspire, obs_ver=obs_ver, reward_ver=reward_ver),
     save_interval=500,
     num_steps_per_env=24,
     max_iterations=30_000,
   )
 
-
-def unitree_g1_inspire_throw_ppo_runner_cfg() -> ThrowOnPolicyRunnerCfg:
+def unitree_g1_throw_ppo_runner_cfg(inspire: bool = True, obs_ver: int = 0, reward_ver: int = 0) -> ThrowOnPolicyRunnerCfg:
   return ThrowOnPolicyRunnerCfg(
     actor=RslRlModelCfg(
       hidden_dims=(512, 256, 128),
@@ -85,7 +86,7 @@ def unitree_g1_inspire_throw_ppo_runner_cfg() -> ThrowOnPolicyRunnerCfg:
       desired_kl=0.01,
       max_grad_norm=1.0,
     ),
-    experiment_name="g1_inspire_throw_catch",
+    experiment_name=experiment_name(throw=True, inspire=inspire, obs_ver=obs_ver, reward_ver=reward_ver),
     save_interval=500,
     num_steps_per_env=24,
     max_iterations=30_000,

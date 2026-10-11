@@ -19,7 +19,7 @@ git lfs install
 git lfs pull
 git submodule update --init --recursive
 uv sync --locked --extra cpu --no-dev
-uv run --no-sync g1-catch-play Mjlab-Catch-Throws-Unitree-G1-Inspire \
+uv run --no-sync g1-catch-play Mjlab-Catch-Throws-Unitree-G1-Inspire-o0-r0 \
   --checkpoint-file pretrained/phase2_catch_release.pt \
   --viewer viser --device cpu --num-envs 1
 ```
@@ -36,7 +36,7 @@ observation normalizer; it does not resume its critic, optimizer, or iteration.
 
 ```bash
 uv sync --locked --extra cu128 --no-dev
-uv run --no-sync g1-catch-train Mjlab-Catch-Throws-Unitree-G1-Inspire \
+uv run --no-sync g1-catch-train Mjlab-Catch-Throws-Unitree-G1-Inspire-o0-r0 \
   --agent.pretrained-actor-checkpoint pretrained/phase1_tracking.pt \
   --env.commands.throw.motion-cfg.motion-file /path/to/g1_inspire_catch_dataset.npz \
   --env.scene.num-envs 2048 \

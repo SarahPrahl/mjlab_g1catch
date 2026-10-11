@@ -7,10 +7,8 @@ import sys
 from pathlib import Path
 
 from unitree_g1_catch import (
-  TASK_ID,
-  TASK_ID_STANDARD,
-  THROW_TASK_ID,
-  THROW_TASK_ID_STANDARD,
+  task_id,
+  experiment_name,
   register_tasks,
 )
 
@@ -50,6 +48,8 @@ def train_pipeline_main() -> None:
   parser.add_argument("--log-root", type=Path, default=Path("logs/rsl_rl"))
   parser.add_argument("--run-name", default="pipeline")
   parser.add_argument("--inspire", action="store_true", help="Use Inspire hand in the environment")
+  parser.add_argument("--obs-version", type=int, default=0, help="Observation version")
+  parser.add_argument("--reward-version", type=int, default=0, help="Reward version")
   args = parser.parse_args()
 
   motion_file = args.motion_file.expanduser().resolve()
@@ -65,10 +65,10 @@ def train_pipeline_main() -> None:
     parser.error(f"training executable does not exist: {train_executable}")
 
   log_root = args.log_root.expanduser().resolve()
-  flat_task_id = TASK_ID if args.inspire else TASK_ID_STANDARD
-  throw_task_id = THROW_TASK_ID if args.inspire else THROW_TASK_ID_STANDARD
+  flat_task_id = task_id(throw=False, inspire=args.inspire, obs_ver=args.obs_version, reward_ver=args.reward_version)
+  throw_task_id = task_id(throw=True, inspire=args.inspire, obs_ver=args.obs_version, reward_ver=args.reward_version)
 
-  phase_1_root = log_root / "g1_inspire_catch"
+  phase_1_root = log_root / experiment_name(throw=False, inspire=args.inspire, obs_ver=args.obs_version, reward_ver=args.reward_version)
   previous_runs = set(phase_1_root.iterdir()) if phase_1_root.exists() else set()
   phase_1_name = f"{args.run_name}-phase1"
   subprocess.run(

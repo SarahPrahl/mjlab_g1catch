@@ -60,7 +60,7 @@ Stage 1 uses the recordings as reference motions. The first 2,500 iterations use
 flat floors; training then gradually mixes in 50% millimetre-scale variations.
 
 ```bash
-uv run g1-catch-train Mjlab-Catch-Flat-Unitree-G1-Inspire \
+uv run g1-catch-train Mjlab-Catch-Flat-Unitree-G1-Inspire-o0-r0 \
   --env.commands.motion.motion-file \
     converted_catch/g1_inspire_catch_dataset.npz \
   --env.scene.num-envs 2048 \
@@ -97,7 +97,7 @@ it is not a safety stop. Old 136-input checkpoints are incompatible: train both
 phases with the new 137-input actor.
 
 ```bash
-uv run g1-catch-train Mjlab-Catch-Throws-Unitree-G1-Inspire \
+uv run g1-catch-train Mjlab-Catch-Throws-Unitree-G1-Inspire-o0-r0 \
   --agent.pretrained-actor-checkpoint \
     path/to/stage-1/model_N.pt \
   --env.commands.throw.motion-cfg.motion-file \
@@ -117,7 +117,10 @@ uv run g1-catch-train-all \
   --motion-file converted_catch/g1_inspire_catch_dataset.npz \
   --phase-1-iterations 20000 \
   --phase-2-iterations 20000 \
-  --num-envs 2048
+  --num-envs 2048 \
+  --inspire \
+  --obs-version 0 \
+  --reward-version 0
 ```
 
 Training writes checkpoints and logs below `logs/rsl_rl/`. Start TensorBoard at
@@ -132,7 +135,7 @@ uv run tensorboard --logdir logs/rsl_rl --port 6006
 Play a stage 1 checkpoint with a converted clip or with the merged dataset:
 
 ```bash
-uv run g1-catch-play Mjlab-Catch-Flat-Unitree-G1-Inspire \
+uv run g1-catch-play Mjlab-Catch-Flat-Unitree-G1-Inspire-o0-r0 \
   --checkpoint-file path/to/model_N.pt \
   --motion-file converted_catch/g1_inspire_catch_dataset.npz \
   --viewer viser
@@ -141,7 +144,7 @@ uv run g1-catch-play Mjlab-Catch-Flat-Unitree-G1-Inspire \
 Play a stage 2 checkpoint:
 
 ```bash
-uv run g1-catch-play Mjlab-Catch-Throws-Unitree-G1-Inspire \
+uv run g1-catch-play Mjlab-Catch-Throws-Unitree-G1-Inspire-o0-r0 \
   --checkpoint-file path/to/model_N.pt \
   --viewer viser
 ```
@@ -181,8 +184,23 @@ ssh -N \
 Open <http://localhost:8080> for Viser. Open <http://localhost:6006> for
 TensorBoard.
 
-## Policy interface
+## Unitree G1 without vs with Inspire Hands
+The Task IDs indicate whether to use the Inspire hands or the regular rubber hands. If the Task ID contains "Inspire", the Inspire hands are being used, otherwise the rubber hands are being used.
 
+When training both stages sequentially set the `--inspire` flag to use the Inspire hands.
+
+## Policy interface
+### Observation & Reward Configuration Version
+The Task IDs end in -o{Observation Version}-r{Reward Version}, defining wich observation configuration and reward configuration is being utilized.
+
+When training both stages sequentially one can pass the version as arguments with `--obs-version` and `--reward-version`.
+
+#### Adding custom Observation/Reward Configuration
+A custom observation space can be created by adding a new inner list of observation names to `ACTOR_OBSERVATION_TERMS` (actor observations shared between both phases), `CRITIC_OBSERVATION_TERMS_CATCH` (critic observations of Phase 1) and `CRITIC_OBSERVATION_TERMS_THROW` (critic observations of Phase 2) in the file `tasks\obs_cfgs.py`.
+
+A custom reward configuration can be created by adding a new inner dictionary with the reward names as keys and weights as values to `REWARD_TERMS_WEIGHTS_CATCH` (additional rewards beside basic tracking rewards for Phase 1), and `REWARD_TERMS_WEIGHTS_THROW` (reward terms for Phase 2) in the file `tasks\obs_cfgs.py`. Also add a list of rehersal rewards to `REHERSAL_REWARD_NAMES` which should be retained from Phase 1 to Phase 2.
+
+### Configuration -o0-r0 for Unitree G1 with Inspire hands
 Both actors use the same 137-value observation:
 
 | Observation                         | Values |
@@ -217,6 +235,8 @@ actor does not use this data.
 | `motions/pipeline.py`     | NPZ validation and conversion                     |
 | `tasks/env_cfg.py`        | Environments, ball model, terrain, and task terms |
 | `tasks/rl_cfg.py`         | PPO and actor configuration                       |
+| `tasks/obs_cfgs.py`       | Observation configurations                        |
+| `tasks/reward_cfgs.py`    | Reward configurations                             |
 | `tasks/runner.py`         | Stage 1 to stage 2 actor transfer                 |
 | `cli.py`                  | mjlab train and play wrappers                     |
 | `third_party/`            | G1 with Inspire hands model submodule             |

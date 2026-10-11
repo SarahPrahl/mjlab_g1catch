@@ -10,11 +10,8 @@ from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import (
   CurriculumTermCfg,
   EventTermCfg,
-  ObservationGroupCfg,
-  ObservationTermCfg,
   TerminationTermCfg,
 )
-from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking import mdp as tracking_mdp
@@ -40,6 +37,9 @@ from unitree_g1_catch.mdp import (
   CatchMotionCommandCfg,
   RehearsalThrowCommandCfg,
 )
+
+from unitree_g1_catch.tasks.obs_cfgs import catch_observation_cfg
+from unitree_g1_catch.tasks.reward_cfgs import catch_reward_cfg
 
 BALL_DIAMETER_M = 0.15
 BALL_RADIUS_M = BALL_DIAMETER_M / 2.0
@@ -155,87 +155,25 @@ def _catch_motion_cfg(
     viz=source.viz,
   )
 
-
-def _actor_observation_terms(
-  command_name: str,
-  humanoid: Humanoid,
-  occlude_in_catch_zone: bool = False,
-) -> dict[str, ObservationTermCfg]:
-  """Return the deployment observation interface shared by both training stages."""
-  actor_joint_cfg = SceneEntityCfg(
-    "robot", joint_names=humanoid.actuated_joints
-  )
-  return {
-    # Root link angular velocity in body frame
-    "base_ang_vel": ObservationTermCfg(
-      func=tracking_mdp.base_ang_vel,
-      noise=Unoise(n_min=-0.1, n_max=0.1),
-    ),
-    # Gravity vector projected into body frame
-    "projected_gravity": ObservationTermCfg(
-      func=tracking_mdp.projected_gravity,
-      noise=Unoise(n_min=-0.03, n_max=0.03),
-    ),
-    # Joint positions of all actuated joints, relative to the initial pose of the robot, with small noise to improve robustness.
-    "joint_pos": ObservationTermCfg(
-      func=tracking_mdp.joint_pos_rel,
-      params={"asset_cfg": actor_joint_cfg, "biased": True},
-      noise=Unoise(n_min=-0.01, n_max=0.01),
-    ),
-    # Joint velocities of all actuated joints, relative to the initial pose of the robot, with small noise to improve robustness.
-    "joint_vel": ObservationTermCfg(
-      func=tracking_mdp.joint_vel_rel,
-      params={"asset_cfg": actor_joint_cfg},
-      noise=Unoise(n_min=-0.25, n_max=0.25),
-    ),
-    # Action taken in the previous step
-    "last_action": ObservationTermCfg(func=tracking_mdp.last_action),
-    # Ball position relative to the robot anchor, in the anchor frame.
-    "ball_position": ObservationTermCfg(
-      func=catch_mdp.ball_position_b,
-      params={
-        "command_name": command_name,
-        "occlude_in_catch_zone": occlude_in_catch_zone,
-      },
-      noise=Unoise(n_min=-0.01, n_max=0.01),
-    ),
-    # Ball velocity relative to the robot anchor, in the anchor frame.
-    "ball_velocity": ObservationTermCfg(
-      func=catch_mdp.ball_velocity_b,
-      params={
-        "command_name": command_name,
-        "occlude_in_catch_zone": occlude_in_catch_zone,
-      },
-      noise=Unoise(n_min=-0.1, n_max=0.1),
-    ),
-    # Wheather the ball can currently be tracked
-    "ball_visible": ObservationTermCfg(
-      func=catch_mdp.ball_visible,
-      params={
-        "command_name": command_name,
-        "occlude_in_catch_zone": occlude_in_catch_zone,
-      },
-    ),
-    # Whether the robot is currently in a catching state
-    "catch_enabled": ObservationTermCfg(
-      func=catch_mdp.catch_enabled,
-      params={"command_name": command_name},
-    ),
-  }
-
-
 def unitree_g1_catch_env_cfg(
   play: bool = False,
   inspire: bool = False,
+  obs_version: int = 0,
+  reward_version: int = 0,
 ) -> ManagerBasedRlEnvCfg:
   """Create the reactive G1 ball-catching task, optionally with Inspire hands."""
+  # Get Mjlab configuration for basic imitation learning (tracking)
   cfg = make_tracking_env_cfg()
+
+  # For training grow uneven terrain
   if not play:
     cfg.scene.terrain = _training_terrain_cfg()
     cfg.curriculum["terrain_mix"] = CurriculumTermCfg(
       func=catch_mdp.terrain_mix,
       params={"flat_steps": 60_000, "curriculum_steps": 240_000},
     )
+
+  # Define the robot and set robot and ball into the scene
   humanoid = UnitreeG1Inspire() if inspire else UnitreeG1()
   robot = humanoid.get_cfg()
   cfg.scene.entities = {
@@ -243,6 +181,7 @@ def unitree_g1_catch_env_cfg(
     "ball": EntityCfg(spec_fn=get_ball_spec),
   }
 
+  # -------------------------------- Define Sensors -----------------------------------------
   self_collision = ContactSensorCfg(
     name="self_collision",
     primary=ContactMatch(
@@ -277,6 +216,7 @@ def unitree_g1_catch_env_cfg(
   )
   cfg.scene.sensors = (self_collision, *hand_ball_sensors)
 
+  # Configure oint actions and limits
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
   joint_pos_action.scale = humanoid.action_scale
@@ -284,75 +224,44 @@ def unitree_g1_catch_env_cfg(
     "robot", joint_names=humanoid.actuated_joints
   )
 
+  # Define the motion command generator
   source_motion = cfg.commands["motion"]
   assert isinstance(source_motion, MotionCommandCfg)
   motion_cmd = _catch_motion_cfg(source_motion, humanoid)
   cfg.commands["motion"] = motion_cmd
 
-  cfg.observations["actor"] = ObservationGroupCfg(
-    terms=_actor_observation_terms("motion", humanoid),
-    concatenate_terms=True,
-    enable_corruption=True,
-  )
-  cfg.observations["critic"].terms["ball_state"] = ObservationTermCfg(
-    func=catch_mdp.ball_position_b, params={"command_name": "motion"}
-  )
-  cfg.observations["critic"].terms["base_lin_vel"] = ObservationTermCfg(
-    func=tracking_mdp.base_lin_vel
-  )
-  cfg.observations["critic"].terms["base_ang_vel"] = ObservationTermCfg(
-    func=tracking_mdp.base_ang_vel
-  )
-  cfg.observations["critic"].terms["ball_velocity"] = ObservationTermCfg(
-    func=catch_mdp.ball_velocity_b, params={"command_name": "motion"}
-  )
-  cfg.observations["critic"].terms["reference_ball_state"] = ObservationTermCfg(
-    func=catch_mdp.reference_ball_state_b, params={"command_name": "motion"}
+  # Define the observation space
+  cfg.observations = catch_observation_cfg(
+    command_name="motion",
+    humanoid=humanoid,
+    version=obs_version,
+    prev_critic_obs=cfg.observations["critic"].terms,
   )
 
-  cfg.rewards["ball_position_tracking"] = RewardTermCfg(
-    func=catch_mdp.ball_position_tracking_exp,
-    weight=1.0,
-    params={"command_name": "motion", "std": 0.25},
-  )
-  cfg.rewards["ball_velocity_tracking"] = RewardTermCfg(
-    func=catch_mdp.ball_velocity_tracking_exp,
-    weight=0.25,
-    params={"command_name": "motion", "std": 1.5},
-  )
-  palm_cfg = (
-    SceneEntityCfg("robot", site_names=humanoid.palm_sites)
-    if humanoid.palm_sites
-    else SceneEntityCfg("robot", geom_names=humanoid.palm_collisions)
-  )
-  cfg.rewards["palm_ball_proximity"] = RewardTermCfg(
-    func=catch_mdp.palm_ball_proximity_exp,
-    weight=1.0,
-    params={
-      "command_name": "motion",
-      "std": 0.3,
-      "asset_cfg": palm_cfg,
-    },
-  )
-  cfg.rewards["ball_contact"] = RewardTermCfg(
-    func=catch_mdp.ball_contact_reward,
-    weight=2.0,
-    params={
-      "command_name": "motion",
-      "left_sensor_name": "left_ball_contact",
-      "right_sensor_name": "right_ball_contact",
-    },
+  # print("Critic observation terms:", cfg.observations["critic"].terms.keys())
+
+  # Define the reward configuration
+  cfg.rewards = catch_reward_cfg(
+    command_name="motion",
+    humanoid=humanoid,
+    version=reward_version,
+    keep_prev=True,
+    play=play,
+    prev_rewards=cfg.rewards,
   )
 
+  # Define Events
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = humanoid.foot_collisions
   cfg.events["base_com"].params["asset_cfg"].body_names = (humanoid.anchor_body,)
   cfg.terminations["ee_body_pos"].params["body_names"] = humanoid.ee_bodies
 
+  # Sim and viewer parameters
   cfg.viewer.body_name = humanoid.anchor_body
   cfg.viewer.distance = 3.2
   cfg.sim.nconmax = 256
   cfg.sim.njmax = 2048
 
+  # Configure playing the policy
   if play:
     cfg.episode_length_s = int(1e9)
     cfg.observations["actor"].enable_corruption = False
@@ -368,29 +277,23 @@ def unitree_g1_catch_env_cfg(
 def unitree_g1_throw_env_cfg(
   play: bool = False,
   inspire: bool = False,
+  obs_version: int = 0,
+  reward_version: int = 0,
 ) -> ManagerBasedRlEnvCfg:
   """Create stage-two catching with procedurally launched physical balls."""
-  cfg = unitree_g1_catch_env_cfg(play=play, inspire=inspire)
+  # Load the Stage 1 Configuration
+  cfg = unitree_g1_catch_env_cfg(play=play, inspire=inspire, obs_version=obs_version, reward_version=reward_version)
+
+  # Get robot and motion command
   humanoid = UnitreeG1Inspire() if inspire else UnitreeG1()
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, CatchMotionCommandCfg)
-  rehearsal_reward_names = (
-    "motion_global_root_pos",
-    "motion_global_root_ori",
-    "motion_body_pos",
-    "motion_body_ori",
-    "motion_body_lin_vel",
-    "motion_body_ang_vel",
-    "ball_position_tracking",
-    "ball_velocity_tracking",
-    "palm_ball_proximity",
-    "ball_contact",
-  )
-  rehearsal_rewards = {name: cfg.rewards[name] for name in rehearsal_reward_names}
+
   rehearsal_terminations = {
     name: cfg.terminations[name] for name in ("anchor_pos", "anchor_ori", "ee_body_pos")
   }
 
+  # -------------------------------- Define Sensors -----------------------------------------
   palm_sensors = tuple(
     ContactSensorCfg(
       name=f"{side}_palm_ball_contact",
@@ -452,6 +355,7 @@ def unitree_g1_throw_env_cfg(
     *body_ball_sensor,
   )
 
+  # -------------------------------- Define Throw Command -----------------------------------------
   throw_cmd = (
     BallThrowCommandCfg(
       resampling_time_range=(1.0e9, 1.0e9),
@@ -479,223 +383,30 @@ def unitree_g1_throw_env_cfg(
     throw_cmd.initial_hold_time_s = throw_cmd.final_hold_time_s
   cfg.commands = {"throw": throw_cmd}
 
-  cfg.observations["actor"] = ObservationGroupCfg(
-    terms=_actor_observation_terms(
-      "throw", humanoid, occlude_in_catch_zone=True
-    ),
-    concatenate_terms=True,
-    enable_corruption=not play,
-  )
-  critic_joint_cfg = SceneEntityCfg(
-    "robot", joint_names=humanoid.actuated_joints
-  )
-  cfg.observations["critic"] = ObservationGroupCfg(
-    terms={
-      "base_lin_vel": ObservationTermCfg(func=tracking_mdp.base_lin_vel),
-      "base_ang_vel": ObservationTermCfg(func=tracking_mdp.base_ang_vel),
-      "projected_gravity": ObservationTermCfg(func=tracking_mdp.projected_gravity),
-      "anchor_height": ObservationTermCfg(
-        func=catch_mdp.robot_anchor_height,
-        params={"command_name": "throw"},
-      ),
-      "joint_pos": ObservationTermCfg(
-        func=tracking_mdp.joint_pos_rel,
-        params={"asset_cfg": critic_joint_cfg, "biased": True},
-      ),
-      "joint_vel": ObservationTermCfg(
-        func=tracking_mdp.joint_vel_rel,
-        params={"asset_cfg": critic_joint_cfg},
-      ),
-      "last_action": ObservationTermCfg(func=tracking_mdp.last_action),
-      "ball_position": ObservationTermCfg(
-        func=catch_mdp.ball_position_b,
-        params={"command_name": "throw"},
-      ),
-      "ball_velocity": ObservationTermCfg(
-        func=catch_mdp.ball_velocity_b,
-        params={"command_name": "throw"},
-      ),
-      "ball_visible": ObservationTermCfg(
-        func=catch_mdp.ball_visible,
-        params={"command_name": "throw"},
-      ),
-      "throw_state": ObservationTermCfg(
-        func=tracking_mdp.generated_commands,
-        params={"command_name": "throw"},
-      ),
-    },
-    concatenate_terms=True,
-    enable_corruption=False,
+  # Define the observation space
+  cfg.observations = catch_observation_cfg(
+    command_name="throw",
+    humanoid=humanoid,
+    version=obs_version,
+    occlude_in_catch_zone=True,
   )
 
-  body_joint_cfg = SceneEntityCfg("robot", joint_names=humanoid.actuated_joints)
-  arm_cfg = SceneEntityCfg("robot", joint_names=humanoid.arm_joints)
-  arm_ready_cfg = SceneEntityCfg("robot", joint_names=humanoid.arm_ready_joints)
-  elbow_cfg = SceneEntityCfg("robot", joint_names=humanoid.elbow_joints)
-  finger_cfg = SceneEntityCfg(
-    "robot",
-    joint_names=humanoid.finger_joints,
+  # Define the rewards
+  cfg.rewards = catch_reward_cfg(
+    command_name="throw",
+    humanoid=humanoid,
+    version=reward_version,
+    keep_prev=False,
+    play=play,
+    prev_rewards=cfg.rewards,
   )
-  lower_body_cfg = SceneEntityCfg("robot", joint_names=humanoid.lower_body_joints)
+
+  # Define the terminations
   miss_params = {
     "command_name": "throw",
     "minimum_ball_height_m": BALL_RADIUS_M + 0.01,
     "maximum_ball_distance_m": 3.5,
   }
-  cfg.rewards = {
-    "idle_posture": RewardTermCfg(
-      func=catch_mdp.idle_posture_exp,
-      weight=2.0,
-      params={
-        "command_name": "throw",
-        "asset_cfg": arm_cfg,
-        "posture_std": 0.4,
-        "velocity_std": 1.0,
-      },
-    ),
-    "ball_released": RewardTermCfg(
-      func=catch_mdp.ball_released_reward,
-      weight=2.0,
-      params={"command_name": "throw"},
-    ),
-    "standing_posture": RewardTermCfg(
-      func=catch_mdp.standing_posture_exp,
-      weight=3.5,
-      params={
-        "command_name": "throw",
-        "target_height_m": 0.76,
-        "tilt_std": 0.35,
-        "height_std": 0.12,
-        "posture_std": 0.7,
-        "asset_cfg": lower_body_cfg,
-      },
-    ),
-    "base_motion": RewardTermCfg(
-      func=catch_mdp.base_motion_l2,
-      weight=-1.0,
-      params={
-        "command_name": "throw",
-        "position_std": 0.2,
-        "velocity_std": 0.3,
-        "asset_cfg": SceneEntityCfg("robot"),
-      },
-    ),
-    "controlled_arm_posture": RewardTermCfg(
-      func=catch_mdp.controlled_arm_posture_exp,
-      weight=2.0,
-      params={
-        "command_name": "throw",
-        "ready_std": 0.4,
-        "elbow_target_rad": 0.25,
-        "elbow_std": 0.4,
-        "velocity_std": 1.0,
-        "ready_cfg": arm_ready_cfg,
-        "elbow_cfg": elbow_cfg,
-        "arm_cfg": arm_cfg,
-      },
-    ),
-    "arm_motion": RewardTermCfg(
-      func=catch_mdp.arm_motion_l2,
-      weight=-2.0,
-      params={
-        "command_name": "throw",
-        "velocity_limit_rad_s": 2.0,
-        "acceleration_limit_rad_s2": 20.0,
-        "asset_cfg": arm_cfg,
-      },
-    ),
-    "palm_contact": RewardTermCfg(
-      func=catch_mdp.palm_contact_reward,
-      weight=4.0,
-      params={"command_name": "throw"},
-    ),
-    "interception": RewardTermCfg(
-      func=catch_mdp.interception_exp,
-      weight=1.5,
-      params={
-        "command_name": "throw",
-        "speed_std": 0.5,
-        "distance_std": 0.35,
-      },
-    ),
-    "catch_pose": RewardTermCfg(
-      func=catch_mdp.catch_pose_reward,
-      weight=2.0,
-      params={"command_name": "throw"},
-    ),
-    "stable_grasp": RewardTermCfg(
-      func=catch_mdp.stable_grasp_reward,
-      weight=5.0,
-      params={"command_name": "throw"},
-    ),
-    "catch_success": RewardTermCfg(
-      func=catch_mdp.catch_success_reward,
-      weight=10.0,
-      params={"command_name": "throw"},
-    ),
-    "body_ball_contact": RewardTermCfg(
-      func=catch_mdp.body_ball_contact_penalty,
-      weight=-3.0,
-      params={"command_name": "throw", "sensor_name": "body_ball_contact"},
-    ),
-    "joint_torques_l2": RewardTermCfg(
-      func=tracking_mdp.joint_torques_l2,
-      weight=-1.0e-5,
-      params={"asset_cfg": SceneEntityCfg("robot", joint_names=humanoid.actuated_joints)},
-    ),
-    "joint_limit": RewardTermCfg(
-      func=tracking_mdp.joint_pos_limits,
-      weight=-10.0,
-      params={"asset_cfg": body_joint_cfg},
-    ),
-    "self_collisions": RewardTermCfg(
-      func=tracking_mdp.self_collision_cost,
-      weight=-10.0,
-      params={"sensor_name": "self_collision", "force_threshold": 10.0},
-    ),
-  }
-  if humanoid.finger_joints:
-    cfg.rewards.update(
-      {
-        "finger_posture": RewardTermCfg(
-          func=catch_mdp.finger_posture_exp,
-          weight=1.0,
-          params={
-            "command_name": "throw",
-            "open_std": 0.15,
-            "grip_std": 0.25,
-            "velocity_limit_rad_s": 1.0,
-            "velocity_std": 0.5,
-            "grip_targets": humanoid.finger_grip_targets,
-            "asset_cfg": finger_cfg,
-          },
-        ),
-        "finger_contact": RewardTermCfg(
-          func=catch_mdp.finger_contact_reward,
-          weight=4.0,
-          params={
-            "command_name": "throw",
-            "left_sensor_name": "left_finger_ball_contact",
-            "right_sensor_name": "right_finger_ball_contact",
-            "contacts_per_hand": 2,
-          },
-        ),
-      }
-    )
-  if not play:
-    for name, term in rehearsal_rewards.items():
-      params = {
-        key: value for key, value in term.params.items() if key != "command_name"
-      }
-      cfg.rewards[f"rehearsal_{name}"] = RewardTermCfg(
-        func=catch_mdp.rehearsal_reward,
-        weight=term.weight,
-        params={
-          "command_name": "throw",
-          "reward_func": term.func,
-          **params,
-        },
-      )
 
   cfg.terminations = {
     "time_out": TerminationTermCfg(func=tracking_mdp.time_out, time_out=True),
@@ -731,6 +442,8 @@ def unitree_g1_throw_env_cfg(
           **params,
         },
       )
+
+  # Define the events
   cfg.events["reset_scene"] = EventTermCfg(
     func=tracking_mdp.reset_scene_to_default,
     mode="reset",
