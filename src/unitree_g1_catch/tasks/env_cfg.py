@@ -188,7 +188,7 @@ def unitree_g1_catch_env_cfg(
       mode="body",
       pattern=".*",
       entity="robot",
-      exclude=humanoid.finger_bodies,
+      exclude=humanoid.hand_bodies,
     ),
     secondary=ContactMatch(mode="subtree", pattern=humanoid.root_body, entity="robot"),
     fields=("found", "force"),
@@ -200,8 +200,8 @@ def unitree_g1_catch_env_cfg(
     ContactSensorCfg(
       name=f"{side}_ball_contact",
       primary=ContactMatch(
-        mode="geom",
-        pattern=patterns[0],
+        mode="subtree",
+        pattern=patterns,
         entity="robot",
       ),
       secondary=ContactMatch(mode="body", pattern="ball", entity="ball"),
@@ -211,7 +211,7 @@ def unitree_g1_catch_env_cfg(
       history_length=4,
     )
     for side, patterns in zip(
-      ("left", "right"), humanoid.palm_collisions_by_hand, strict=True
+      ("left", "right"), humanoid.palm_bodies, strict=True
     )
   )
   cfg.scene.sensors = (self_collision, *hand_ball_sensors)
@@ -315,7 +315,6 @@ def unitree_g1_throw_env_cfg(
     )
   )
   finger_sensors = ()
-  body_ball_sensor = ()
   if humanoid.finger_joints:
     finger_sensors = tuple(
       ContactSensorCfg(
@@ -341,7 +340,7 @@ def unitree_g1_throw_env_cfg(
         mode="body",
         pattern=".*",
         entity="robot",
-        exclude=humanoid.finger_bodies,
+        exclude=humanoid.hand_bodies,
       ),
       secondary=ContactMatch(mode="body", pattern="ball", entity="ball"),
       fields=("found",),
@@ -354,7 +353,7 @@ def unitree_g1_throw_env_cfg(
     *cfg.scene.sensors,
     *palm_sensors,
     *finger_sensors,
-    *body_ball_sensor,
+    body_ball_sensor,
   )
 
   # -------------------------------- Define Throw Command -----------------------------------------

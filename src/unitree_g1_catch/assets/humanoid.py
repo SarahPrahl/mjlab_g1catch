@@ -117,6 +117,11 @@ class Humanoid:
     """Return the palm body names for this humanoid."""
     raise NotImplementedError("Subclasses must implement palm_bodies()")
 
+  @property
+  def hand_bodies(self) -> tuple[str, ...]:
+    """Return the regex patterns of hand body names for this humanoid."""
+    raise NotImplementedError("Subclasses must implement hand_bodies()")
+
   # ========================== GETTING SPECIFIC SITE GROUPS ==========================
   @property
   def palm_sites(self) -> tuple[str, ...]:
@@ -274,6 +279,10 @@ class UnitreeG1(Humanoid):
   def palm_bodies(self) -> tuple[str, ...]:
     return ("left_wrist_yaw_link", "right_wrist_yaw_link")
 
+  @property
+  def hand_bodies(self) -> tuple[str, ...]:
+    return self.palm_bodies
+
   # ========================== GETTING SPECIFIC SITE GROUPS ==========================
   @property
   def palm_sites(self) -> tuple[str, ...]:
@@ -382,6 +391,10 @@ class UnitreeG1Inspire(UnitreeG1):
   @property
   def palm_bodies(self) -> tuple[str, ...]:
     return ("l_ih_hand_base", "r_ih_hand_base")
+
+  @property
+  def hand_bodies(self) -> tuple[str, ...]:
+    return ("[lr]_ih_(thumb_distal|(index|middle|ring|pinky)_intermediate|hand_base)",)
 
   # ========================== GETTING SPECIFIC SITE GROUPS ==========================
   @property

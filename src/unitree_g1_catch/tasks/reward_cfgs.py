@@ -261,7 +261,7 @@ def all_rewards_dict(
       func=tracking_mdp.joint_torques_l2,
       weight=-1.0e-5,
       params={
-        "asset_cfg": SceneEntityCfg("robot", joint_names=humanoid.actuated_joints)
+        "asset_cfg": SceneEntityCfg("robot", joint_names=humanoid.joint_names)
       },
     ),
     # Penalize joint positions if they cross the soft limits.
