@@ -140,7 +140,6 @@ for expr in FINGER_ACTUATOR_EXPR:
 if __name__ == "__main__":
   # View the G1 Inspire MJCF in a standalone viewer for debugging.
   import mujoco.viewer as viewer
-
   from mjlab.entity.entity import Entity
 
   robot = Entity(get_g1_inspire_robot_cfg())

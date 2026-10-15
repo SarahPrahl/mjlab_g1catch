@@ -156,7 +156,9 @@ class finger_posture_exp:
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     robot: Entity = env.scene[cfg.params["asset_cfg"].name]
     grip_target_patterns = tuple(cfg.params["grip_targets"].keys())
-    joint_ids, joint_names = robot.find_joints(grip_target_patterns, preserve_order=True)
+    joint_ids, joint_names = robot.find_joints(
+      grip_target_patterns, preserve_order=True
+    )
     _, _, targets = resolve_matching_names_values(
       data=cfg.params["grip_targets"],
       list_of_strings=joint_names,

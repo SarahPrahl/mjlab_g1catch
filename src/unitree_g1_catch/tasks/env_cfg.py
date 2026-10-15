@@ -24,7 +24,6 @@ from mjlab.terrains import (
   TerrainGeneratorCfg,
 )
 from mjlab.terrains.terrain_generator import TerrainGeometry, TerrainOutput
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 from unitree_g1_catch import mdp as catch_mdp
 from unitree_g1_catch.assets import (
@@ -37,7 +36,6 @@ from unitree_g1_catch.mdp import (
   CatchMotionCommandCfg,
   RehearsalThrowCommandCfg,
 )
-
 from unitree_g1_catch.tasks.obs_cfgs import catch_observation_cfg
 from unitree_g1_catch.tasks.reward_cfgs import catch_reward_cfg
 
@@ -46,6 +44,7 @@ BALL_RADIUS_M = BALL_DIAMETER_M / 2.0
 BALL_MASS_KG = 0.112
 BALL_CONTACT_SOLREF = (0.02, 1.2)
 BALL_CONTACT_SOLIMP = (0.3, 0.9, 0.01, 0.5, 2.0)
+
 
 @dataclass(kw_only=True)
 class _BoxUnevenTerrainCfg(SubTerrainCfg):
@@ -154,6 +153,7 @@ def _catch_motion_cfg(
     humanoid=humanoid,
     viz=source.viz,
   )
+
 
 def unitree_g1_catch_env_cfg(
   play: bool = False,
@@ -282,7 +282,9 @@ def unitree_g1_throw_env_cfg(
 ) -> ManagerBasedRlEnvCfg:
   """Create stage-two catching with procedurally launched physical balls."""
   # Load the Stage 1 Configuration
-  cfg = unitree_g1_catch_env_cfg(play=play, inspire=inspire, obs_version=obs_version, reward_version=reward_version)
+  cfg = unitree_g1_catch_env_cfg(
+    play=play, inspire=inspire, obs_version=obs_version, reward_version=reward_version
+  )
 
   # Get robot and motion command
   humanoid = UnitreeG1Inspire() if inspire else UnitreeG1()

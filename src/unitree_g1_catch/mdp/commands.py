@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 from mjlab.managers import CommandTerm, CommandTermCfg
-from unitree_g1_catch.assets import Humanoid
 from mjlab.tasks.tracking.mdp.commands import (
   MotionCommand,
   MotionCommandCfg,
@@ -21,6 +20,8 @@ from mjlab.utils.lab_api.math import (
   quat_inv,
   sample_uniform,
 )
+
+from unitree_g1_catch.assets import Humanoid
 
 if TYPE_CHECKING:
   from collections.abc import Callable
@@ -50,8 +51,12 @@ class CatchMotionLoader(MotionLoader):
         idx for idx, name in enumerate(joint_names) if name in humanoid.joint_names
       )
       if keep:
-        joint_pos = torch.tensor(data["joint_pos"][:, keep], dtype=torch.float32, device=device)
-        joint_vel = torch.tensor(data["joint_vel"][:, keep], dtype=torch.float32, device=device)
+        joint_pos = torch.tensor(
+          data["joint_pos"][:, keep], dtype=torch.float32, device=device
+        )
+        joint_vel = torch.tensor(
+          data["joint_vel"][:, keep], dtype=torch.float32, device=device
+        )
       else:
         joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
         joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
