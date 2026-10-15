@@ -353,7 +353,7 @@ def unitree_g1_throw_env_cfg(
     *cfg.scene.sensors,
     *palm_sensors,
     *finger_sensors,
-    body_ball_sensor,
+    *body_ball_sensor,
   )
 
   # -------------------------------- Define Throw Command -----------------------------------------
