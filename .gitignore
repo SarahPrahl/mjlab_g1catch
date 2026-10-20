@@ -13,3 +13,4 @@ wandb/
 *.pt
 !/pretrained/phase1_tracking.pt
 !/pretrained/phase2_catch_release.pt
+nohup.out

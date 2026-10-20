@@ -24,6 +24,7 @@ from .rewards import finger_contact_reward as finger_contact_reward
 from .rewards import finger_posture_exp as finger_posture_exp
 from .rewards import idle_posture_exp as idle_posture_exp
 from .rewards import interception_exp as interception_exp
+from .rewards import slow_interception_exp as slow_interception_exp
 from .rewards import palm_ball_proximity_exp as palm_ball_proximity_exp
 from .rewards import palm_contact_reward as palm_contact_reward
 from .rewards import rehearsal_reward as rehearsal_reward

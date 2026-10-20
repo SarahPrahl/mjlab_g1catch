@@ -372,6 +372,25 @@ def interception_exp(
     * command.catch_enabled.float()
   )
 
+def slow_interception_exp(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  speed_std: float,
+  distance_std: float,
+) -> torch.Tensor:
+  """Bring the palms to the ball and reward slowing it down for a catch."""
+  command = _throw_command(env, command_name)
+  speed_score = torch.exp(
+    -torch.square(command.ball_hand_relative_speed) / speed_std**2
+  )
+  proximity = 1.0 / (1.0 + command.ball_palm_distance / distance_std)
+  return (
+    (0.75 * proximity + 0.25 * speed_score)
+    * command.ball_visible.float()
+    * command.synthetic_weight
+    * command.catch_enabled.float()
+  )
+
 
 def catch_pose_reward(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   """Reward an upright, demonstration-like catch with the palms below the ball."""

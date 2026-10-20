@@ -15,6 +15,8 @@ REWARD_TERMS_WEIGHTS_CATCH = [
   },
   # v1
   {
+    "motion_body_pos": 2.0,
+    "motion_body_lin_vel": 2.0,
     "ball_position_tracking": 1.0,
     "ball_velocity_tracking": 0.25,
     "palm_ball_proximity": 1.0,
@@ -50,15 +52,15 @@ REWARD_TERMS_WEIGHTS_THROW = [
     "ball_released": 2.0,
     "standing_posture": 3.5,
     "base_motion": -1.0,
-    "controlled_arm_posture": 2.0,
+    "controlled_arm_posture": 0.5,
     "arm_motion": -2.0,
     "palm_contact": 4.0,
-    "interception": 1.5,
+    "slow_interception": 4.0,
     "catch_pose": 2.0,
     "stable_grasp": 5.0,
     "catch_success": 10.0,
     "body_ball_contact": -3.0,
-    "joint_torques_l2": -1.0e-4,
+    "joint_torques_l2": -1.0e-5,
     "joint_limit": -10.0,
     "self_collisions": -10.0,
     "finger_posture": 1.0,
@@ -117,7 +119,45 @@ def all_rewards_dict(
   lower_body_cfg = SceneEntityCfg("robot", joint_names=humanoid.lower_body_joints)
 
   return {
-    # How well the ball position fits to the motion data
+    # Reward small error between the anchor body position of the robot and the motion file anchor body
+    "motion_global_root_pos": RewardTermCfg(
+      func=tracking_mdp.motion_global_anchor_position_error_exp,
+      weight=0.5,
+      params={"command_name": "motion", "std": 0.3},
+    ),
+    # Reward small error between the anchor body orientation of the robot and the motion file anchor body
+    "motion_global_root_ori": RewardTermCfg(
+      func=tracking_mdp.motion_global_anchor_orientation_error_exp,
+      weight=0.5,
+      params={"command_name": "motion", "std": 0.4},
+    ),
+    # Reward small error between all relative body positions of the robot and the motion file
+    "motion_body_pos": RewardTermCfg(
+      func=tracking_mdp.motion_relative_body_position_error_exp,
+      weight=1.0,
+      params={"command_name": "motion", "std": 0.3},
+    ),
+    # Reward small error between all relative body orientations of the robot and the motion file
+    "motion_body_ori": RewardTermCfg(
+      func=tracking_mdp.motion_relative_body_orientation_error_exp,
+      weight=1.0,
+      params={"command_name": "motion", "std": 0.4},
+    ),
+    # Reward small error between all bodies linear velocity of the robot and the motion file
+    "motion_body_lin_vel": RewardTermCfg(
+      func=tracking_mdp.motion_global_body_linear_velocity_error_exp,
+      weight=1.0,
+      params={"command_name": "motion", "std": 1.0},
+    ),
+    # Reward small error between all bodies angular velocity of the robot and the motion file
+    "motion_body_ang_vel": RewardTermCfg(
+      func=tracking_mdp.motion_global_body_angular_velocity_error_exp,
+      weight=1.0,
+      params={"command_name": "motion", "std": 3.14},
+    ),
+    # Punish large action values
+    "action_rate_l2": RewardTermCfg(func=tracking_mdp.action_rate_l2, weight=-1e-1),
+    # Reward, how well the ball position fits to the motion data
     "ball_position_tracking": RewardTermCfg(
       func=catch_mdp.ball_position_tracking_exp,
       weight=1.0,
@@ -225,6 +265,16 @@ def all_rewards_dict(
     # Bring the palms to the ball, with an extra bonus for velocity matching.
     "interception": RewardTermCfg(
       func=catch_mdp.interception_exp,
+      weight=1.5,
+      params={
+        "command_name": command_name,
+        "speed_std": 0.5,
+        "distance_std": 0.35,
+      },
+    ),
+    # Bring the palms to the ball and reward slowing it down
+    "slow_interception": RewardTermCfg(
+      func=catch_mdp.slow_interception_exp,
       weight=1.5,
       params={
         "command_name": command_name,
